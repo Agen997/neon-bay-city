@@ -71,11 +71,16 @@ export function tryEnterOrExitCar(game) {
     car.speed = 0;
     p.car = null;
     // Step out on the driver's side so the player is never inside a wall.
-    p.x = car.x + Math.cos(car.angle + Math.PI / 2) * 34;
-    p.y = car.y + Math.sin(car.angle + Math.PI / 2) * 34;
-    if (collidesSolid(game.world, p.x, p.y, p.radius)) {
-      p.x = car.x - Math.cos(car.angle + Math.PI / 2) * 34;
-      p.y = car.y - Math.sin(car.angle + Math.PI / 2) * 34;
+    // If both sides are blocked (a narrow alley), step out behind the car.
+    const spots = [
+      [Math.cos(car.angle + Math.PI / 2), Math.sin(car.angle + Math.PI / 2)],
+      [-Math.cos(car.angle + Math.PI / 2), -Math.sin(car.angle + Math.PI / 2)],
+      [-Math.cos(car.angle), -Math.sin(car.angle)],
+    ];
+    for (const [dx, dy] of spots) {
+      p.x = car.x + dx * 34;
+      p.y = car.y + dy * 34;
+      if (!collidesSolid(game.world, p.x, p.y, p.radius)) break;
     }
     game.addMessage('Out of the car.');
     return;
@@ -84,8 +89,12 @@ export function tryEnterOrExitCar(game) {
   if (!car) return;
   p.car = car;
   car.owner = 'player';
+  // The player's ride is sturdier than a random traffic car.
+  car.health = Math.max(car.health, CFG.playerCarHealth);
   if (!car.owned) {
     car.owned = true;
+    // A real theft: the mission that asks for a stolen car watches this.
+    game.justStole = true;
     game.addWanted(1, 'Car stolen');
     game.addMessage('You stole the car! The law noticed.');
     game.sound.pickup();

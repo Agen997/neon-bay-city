@@ -4,7 +4,7 @@
 // the game's own code, never a staged mock-up.
 import { createCar, spawnTrafficCar } from './vehicles.js';
 import { spawnPedestrian } from './traffic.js';
-import { spawnPoliceCar } from './police.js';
+import { spawnPoliceCar, spawnFootOfficer } from './police.js';
 import { startMission } from './missions.js';
 import { spawnThug } from './combat.js';
 
@@ -19,7 +19,7 @@ function clearTraffic(game) {
 
 function fillStreet(game, count) {
   for (let i = 0; i < count; i += 1) spawnTrafficCar(game);
-  for (let i = 0; i < 26; i += 1) {
+  for (let i = 0; i < 34; i += 1) {
     const ped = spawnPedestrian(game);
     ped.x = game.player.x + game.rng.range(-600, 600);
     ped.y = game.player.y + game.rng.range(-420, 420);
@@ -48,9 +48,10 @@ export function applyShot(game, name) {
     game.player.x = spots.plaza.x;
     game.player.y = spots.plaza.y;
     clearTraffic(game);
-    putPlayerInCar(game, spots.plaza.x - 40, spots.plaza.y + 120, 0, '#ffcf3f');
+    const parked = putPlayerInCar(game, spots.plaza.x - 40, spots.plaza.y + 120, 0, '#ffcf3f');
+    parked.speed = 0;
     game.player.car = null;
-    fillStreet(game, 8);
+    fillStreet(game, 12);
     return;
   }
   game.state = 'playing';
@@ -60,7 +61,11 @@ export function applyShot(game, name) {
     game.player.x = 1216;
     game.player.y = 1472;
     putPlayerInCar(game, 1216, 1472, 0, '#ffcf3f');
-    fillStreet(game, 10);
+    // A second car right beside the player, so the street reads as busy.
+    const other = createCar(1216, 1472 - 90, 0, '#4a90e8', 'civilian');
+    other.speed = 200;
+    game.cars.push(other);
+    fillStreet(game, 14);
     game.missionIndex = 0;
     startMission(game, 0);
     game.missionStep = 2;
@@ -72,7 +77,7 @@ export function applyShot(game, name) {
     game.player.y = 960;
     const car = putPlayerInCar(game, 1728, 960, 0, '#ffcf3f');
     car.speed = 380;
-    fillStreet(game, 7);
+    fillStreet(game, 10);
     game.wanted = 3;
     game.lastCrimeAt = game.elapsed;
     const cop1 = spawnPoliceCar(game);
@@ -85,6 +90,15 @@ export function applyShot(game, name) {
     cop2.y = car.y - 50;
     cop2.angle = 0;
     cop2.speed = 400;
+    const cop3 = spawnPoliceCar(game);
+    cop3.x = car.x - 180;
+    cop3.y = car.y + 110;
+    cop3.angle = 0;
+    cop3.speed = 400;
+    // A foot officer closing in on the sidewalk, for the minimap and the street.
+    const officer = spawnFootOfficer(game);
+    officer.x = car.x + 220;
+    officer.y = car.y - 160;
     game.missionIndex = 3;
     startMission(game, 3);
     game.missionStep = 2;
@@ -95,7 +109,7 @@ export function applyShot(game, name) {
     game.player.x = spots.pier.x - 40;
     game.player.y = spots.pier.y + 20;
     game.player.car = null;
-    game.wanted = 1;
+    game.wanted = 2;
     game.lastCrimeAt = game.elapsed;
     game.missionIndex = 2;
     startMission(game, 2);
@@ -103,12 +117,21 @@ export function applyShot(game, name) {
     game.collectedDrops = 1;
     game.pickups.push(
       { x: spots.pier.x + 60, y: spots.pier.y + 30, kind: 'cash', taken: false },
-      { x: spots.pier.x + 160, y: spots.pier.y - 10, kind: 'cash', taken: false },
+      { x: spots.pier.x + 90, y: spots.pier.y - 10, kind: 'cash', taken: false },
+      { x: spots.pier.x - 90, y: spots.pier.y + 60, kind: 'health', taken: false },
     );
-    spawnThug(game, spots.pier.x + 100, spots.pier.y - 40);
+    // Every thug stands on the pier boards, not in the water past its end.
+    spawnThug(game, spots.pier.x + 80, spots.pier.y - 40);
     spawnThug(game, spots.pier.x - 120, spots.pier.y + 50);
-    spawnThug(game, spots.pier.x + 200, spots.pier.y + 40);
-    for (let i = 0; i < 8; i += 1) {
+    spawnThug(game, spots.pier.x + 90, spots.pier.y + 40);
+    spawnThug(game, spots.pier.x + 40, spots.pier.y + 70);
+    // A cruiser rolling down the pier road, so the heat is visible too.
+    const cop = spawnPoliceCar(game);
+    cop.x = 2752;
+    cop.y = 1600;
+    cop.angle = 0;
+    cop.speed = 380;
+    for (let i = 0; i < 10; i += 1) {
       const ped = spawnPedestrian(game);
       ped.x = spots.pier.x + game.rng.range(-300, 300);
       ped.y = spots.pier.y + game.rng.range(-160, 160);

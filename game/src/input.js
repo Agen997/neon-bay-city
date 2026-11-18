@@ -57,6 +57,15 @@ export function createInput(canvas) {
     input.mouseDown = false;
     updateMoveVector();
   });
+  // A hidden tab stops delivering keyup events, so a key held when the
+  // player tabs away would otherwise stay stuck down on return.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      input.keys.clear();
+      input.mouseDown = false;
+      updateMoveVector();
+    }
+  });
 
   input.isDown = (code) => input.keys.has(code);
   input.wasPressed = (code) => input.pressed.has(code);

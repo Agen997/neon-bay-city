@@ -1,8 +1,8 @@
 // Neon Bay — pedestrians: the crowds that make the city feel alive.
 // They stroll the sidewalks, cross at junctions, and run when a shot
 // is fired or a wanted chase rolls past them.
-import { PED_COLORS } from './config.js';
-import { distance } from './random.js';
+import { CFG, PED_COLORS } from './config.js';
+import { distance, gauss } from './random.js';
 import { isOnRoad, isWater, nearestRoadCenter, randomStreetPoint } from './world.js';
 
 export function spawnPedestrian(game, x, y) {
@@ -12,12 +12,14 @@ export function spawnPedestrian(game, x, y) {
     x: point.x,
     y: point.y,
     angle: rng.range(0, Math.PI * 2),
-    speed: rng.range(42, 78),
+    speed: Math.max(36, Math.min(86, gauss(rng, 60, 14))),
     color: rng.pick(PED_COLORS),
     skin: rng.pick(['#f2c89b', '#c98d5e', '#8a5a3b', '#f7d7b0']),
     walking: true,
     fleeing: false,
     down: false,
+    waiting: false,
+    waitTimer: 0,
     // Sidewalk target: the edge of the nearest road.
     targetX: point.x,
     targetY: point.y,
@@ -60,10 +62,29 @@ export function updatePedestrian(game, ped, dt) {
     const away = Math.atan2(ped.y - playerPos.y, ped.x - playerPos.x);
     ped.angle = away;
     ped.speed = 190;
+    ped.waiting = false;
   } else if (ped.retargetTimer <= 0 || distance(ped.x, ped.y, ped.targetX, ped.targetY) < 14) {
-    pickSidewalkTarget(game, ped);
-    ped.retargetTimer = game.rng.range(4, 10);
-    ped.speed = game.rng.range(42, 78);
+    // Reached the corner: sometimes stop and wait there a while, like a
+    // person deciding where to go next, instead of marching on at once.
+    if (game.rng.chance(0.3)) {
+      ped.waiting = true;
+      ped.waitTimer = game.rng.range(1.5, 4);
+      ped.retargetTimer = game.rng.range(4, 10);
+    } else {
+      pickSidewalkTarget(game, ped);
+      ped.retargetTimer = game.rng.range(4, 10);
+      ped.speed = Math.max(36, Math.min(86, gauss(game.rng, 60, 14)));
+    }
+  }
+  if (ped.waiting) {
+    ped.waitTimer -= dt;
+    if (ped.waitTimer <= 0) {
+      ped.waiting = false;
+      pickSidewalkTarget(game, ped);
+      ped.retargetTimer = game.rng.range(4, 10);
+      ped.speed = Math.max(36, Math.min(86, gauss(game.rng, 60, 14)));
+    }
+    return;
   }
   if (!ped.fleeing) {
     ped.angle = Math.atan2(ped.targetY - ped.y, ped.targetX - ped.x);
@@ -91,7 +112,7 @@ export function updatePedestrian(game, ped, dt) {
 export function updatePedestrians(game, dt) {
   for (const ped of game.peds) updatePedestrian(game, ped, dt);
   // Thin the crowd back to the target size, or top it up.
-  const target = game.shotMode ? 26 : 34;
+  const target = game.shotMode ? 26 : CFG.pedCount;
   game.peds = game.peds.filter((ped) => !ped.down || game.rng.chance(0.995));
   while (game.peds.length < target) {
     const ped = spawnPedestrian(game);

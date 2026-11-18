@@ -77,6 +77,20 @@ export function drawWorld(ctx, game) {
     ctx.stroke();
   }
   ctx.setLineDash([]);
+  // Crosswalks: zebra stripes across each road at every intersection.
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  for (const cx of roadCenters()) {
+    for (const cy of roadCenters()) {
+      if (cx > WATER_X) continue;
+      if (!inView(game, cx, cy, 120)) continue;
+      for (let i = -2; i <= 2; i += 1) {
+        ctx.fillRect(cx - 26 + i * 11, cy - 40, 6, 14);
+        ctx.fillRect(cx - 26 + i * 11, cy + 26, 6, 14);
+        ctx.fillRect(cx - 40, cy - 26 + i * 11, 14, 6);
+        ctx.fillRect(cx + 26, cy - 26 + i * 11, 14, 6);
+      }
+    }
+  }
   // The pier: wooden boards over the bay.
   ctx.fillStyle = '#8a6a42';
   ctx.fillRect(PIER.x, PIER.y, PIER.w, PIER.h);
@@ -99,9 +113,51 @@ export function drawWorld(ctx, game) {
     ctx.fillRect(b.x + 4, b.y + 4, b.w - 8, b.h - 8);
     ctx.fillStyle = 'rgba(255,255,255,0.22)';
     ctx.fillRect(b.x + 10, b.y + 10, b.w - 20, Math.max(8, b.h * 0.22));
-    // Roof details: a vent or a pool, depending on the roof.
-    ctx.fillStyle = 'rgba(0,0,0,0.18)';
-    ctx.fillRect(b.x + b.w / 2 - 10, b.y + b.h / 2 - 8, 20, 16);
+    // Roof details by height: a tall roof gets a helipad, a mid roof gets
+    // two AC units, a low roof a single vent.
+    if (b.height >= 3) {
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.beginPath();
+      ctx.arc(b.x + b.w / 2, b.y + b.h / 2, 16, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 15px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('H', b.x + b.w / 2, b.y + b.h / 2 + 5);
+    } else if (b.height === 2) {
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(b.x + b.w / 2 - 16, b.y + b.h / 2 - 8, 14, 16);
+      ctx.fillRect(b.x + b.w / 2 + 4, b.y + b.h / 2 - 8, 14, 16);
+    } else {
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(b.x + b.w / 2 - 10, b.y + b.h / 2 - 8, 20, 16);
+    }
+  }
+  // Street props: benches, hydrants and lamps on the sidewalks.
+  for (const prop of world.props || []) {
+    if (!inView(game, prop.x, prop.y, 40)) continue;
+    if (prop.kind === 'bench') {
+      ctx.fillStyle = '#7a5a34';
+      ctx.fillRect(prop.x - 9, prop.y - 4, 18, 8);
+      ctx.fillStyle = '#5d4426';
+      ctx.fillRect(prop.x - 9, prop.y - 7, 18, 3);
+    } else if (prop.kind === 'hydrant') {
+      ctx.fillStyle = '#d23b2e';
+      ctx.beginPath();
+      ctx.arc(prop.x, prop.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(prop.x, prop.y - 2, 2, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = '#3a3f4a';
+      ctx.fillRect(prop.x - 1, prop.y - 8, 2, 16);
+      ctx.fillStyle = '#ffe27a';
+      ctx.beginPath();
+      ctx.arc(prop.x, prop.y - 9, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
   // Trees.
   for (const t of world.trees) {
@@ -134,6 +190,14 @@ export function drawWorld(ctx, game) {
 function drawCarBody(ctx, car) {
   ctx.save();
   ctx.translate(car.x, car.y);
+  if (car.kind === 'police') {
+    // Siren wash on the road under the cruiser, alternating red and blue.
+    const phase = Math.floor(car.sirenPhase * 4) % 2 === 0;
+    ctx.fillStyle = phase ? 'rgba(255,59,48,0.20)' : 'rgba(47,107,255,0.20)';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 34, 26, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.rotate(car.angle);
   if (car.wrecked) ctx.globalAlpha = 0.75;
   // Wheels.
@@ -223,19 +287,29 @@ export function drawEntities(ctx, game) {
     ctx.fillText('★', target.x, target.y - 40);
     ctx.restore();
   }
-  // Cash drops.
+  // Cash drops and health packs.
   for (const pk of game.pickups) {
     if (pk.taken) continue;
     ctx.save();
     ctx.translate(pk.x, pk.y + Math.sin(game.elapsed * 3 + pk.x) * 3);
-    ctx.fillStyle = '#2e7d32';
-    ctx.beginPath();
-    ctx.arc(0, 0, 12, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#ffcf3f';
-    ctx.font = 'bold 14px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('$', 0, 5);
+    if (pk.kind === 'health') {
+      ctx.fillStyle = '#e8f5e9';
+      ctx.beginPath();
+      ctx.arc(0, 0, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#2e9e4f';
+      ctx.fillRect(-2.5, -8, 5, 16);
+      ctx.fillRect(-8, -2.5, 16, 5);
+    } else {
+      ctx.fillStyle = '#2e7d32';
+      ctx.beginPath();
+      ctx.arc(0, 0, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffcf3f';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('$', 0, 5);
+    }
     ctx.restore();
   }
   // Cars.

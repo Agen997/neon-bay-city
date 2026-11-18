@@ -93,7 +93,14 @@ export function updateBullets(game, dt) {
         thug.health -= CFG.pistolDamage;
         b.dead = true;
         game.addParticles(thug.x, thug.y, '#ff5b5b', 8);
-        if (thug.health <= 0) game.addCash(50, 'Thug dropped cash');
+        if (thug.health <= 0) {
+          game.addCash(50, 'Thug dropped cash');
+          // A downed thug sometimes leaves a health pack behind: the
+          // boss fight is long, and the street provides.
+          if (game.rng.chance(CFG.thugHealthDropChance)) {
+            game.pickups.push({ x: thug.x, y: thug.y, kind: 'health', taken: false });
+          }
+        }
         break;
       }
     }
@@ -147,8 +154,12 @@ export function updateThugs(game, dt) {
     const d = distance(thug.x, thug.y, target.x, target.y);
     thug.angle = angleTo(thug.x, thug.y, target.x, target.y);
     if (d > 46) {
-      thug.x += Math.cos(thug.angle) * thug.speed * dt;
-      thug.y += Math.sin(thug.angle) * thug.speed * dt;
+      // Close in — and charge the last stretch, so a thug does not just
+      // shuffle up to the player at one flat speed.
+      const charging = d < 140;
+      const speed = charging ? thug.speed * 1.35 : thug.speed;
+      thug.x += Math.cos(thug.angle) * speed * dt;
+      thug.y += Math.sin(thug.angle) * speed * dt;
     } else {
       // Close in: swing at the player.
       thug.shootCooldown -= dt;

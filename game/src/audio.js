@@ -8,6 +8,7 @@ export function createSoundBank() {
     muted: false,
     sirenTimer: 0,
     musicTimer: 0,
+    engineTimer: 0,
     ensure() {
       if (bank.ctx) return;
       try {
@@ -61,6 +62,11 @@ export function createSoundBank() {
     },
     engine(running) {
       if (!running || bank.muted || !bank.ctx) return;
+      // One blip per interval, not one per frame: at 60 fps the unthrottled
+      // version spawns sixty oscillators a second while driving.
+      const now = bank.ctx.currentTime;
+      if (now - bank.engineTimer < 0.09) return;
+      bank.engineTimer = now;
       bank.tone(70, 0.08, 'sawtooth', 0.02, 110);
     },
     // Called every frame while police are near: a distant two-tone wail.

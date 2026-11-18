@@ -2,7 +2,7 @@
 // and the arcade driving model both share. Traffic cars cruise their
 // road and turn at junctions; the player's car answers W/A/S/D.
 import { CFG, CAR_COLORS } from './config.js';
-import { clamp, angleDelta, distance } from './random.js';
+import { clamp, angleDelta, distance, shuffle } from './random.js';
 import { collidesSolid, nearestRoadCenter, roadCenters, isOnRoad } from './world.js';
 
 let carId = 0;
@@ -27,6 +27,7 @@ export function createCar(x, y, angle, color, kind) {
     roadLine: y,
     dir: 1,
     stuckTimer: 0,
+    reverseTimer: 0,
   };
 }
 
@@ -44,8 +45,12 @@ export function spawnParkedCars(game) {
     { x: spots.hideout.x, y: spots.hideout.y + 190 },
     { x: spots.diner.x, y: spots.diner.y + 80 },
   ];
-  for (const a of anchors) {
-    const car = createCar(a.x, a.y, rng.range(0, Math.PI * 2), rng.pick(CAR_COLORS), 'civilian');
+  // Deal the parked cars distinct colours from a shuffled deck, so the
+  // street does not roll the same red twice in a row.
+  const colors = shuffle(rng, CAR_COLORS);
+  for (let i = 0; i < anchors.length; i += 1) {
+    const a = anchors[i];
+    const car = createCar(a.x, a.y, rng.range(0, Math.PI * 2), colors[i % colors.length], 'civilian');
     car.speed = 0;
     game.cars.push(car);
   }
@@ -108,6 +113,29 @@ export function updateTrafficCar(game, car, dt) {
   }
   const want = ahead ? 0 : CFG.trafficSpeed;
   car.speed += clamp(want - car.speed, -260 * dt, 180 * dt);
+  // Wedged against a building or a dead end, with nobody ahead of it: back
+  // out for a moment instead of sitting on the road forever.
+  if (!ahead) {
+    if (Math.abs(car.speed) < 5) car.stuckTimer += dt;
+    else car.stuckTimer = 0;
+  } else {
+    car.stuckTimer = 0;
+  }
+  if (car.stuckTimer > 2.5 && car.reverseTimer <= 0) {
+    car.reverseTimer = 0.9;
+    car.stuckTimer = 0;
+  }
+  if (car.reverseTimer > 0) {
+    car.reverseTimer -= dt;
+    const bx = car.x - Math.cos(car.angle) * 70 * dt;
+    const by = car.y - Math.sin(car.angle) * 70 * dt;
+    if (isOnRoad(bx, by)) {
+      car.x = bx;
+      car.y = by;
+    }
+    car.speed = -70;
+    return;
+  }
   const nx = car.x + Math.cos(car.angle) * car.speed * dt;
   const ny = car.y + Math.sin(car.angle) * car.speed * dt;
   if (isOnRoad(nx, ny) || car.speed < 1) {

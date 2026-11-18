@@ -12,7 +12,7 @@ import { spawnParkedCars, spawnTrafficCar, updateTrafficCar, drivePlayerCar, car
 import { spawnPedestrians, updatePedestrians } from './traffic.js';
 import { addWanted, updatePolice } from './police.js';
 import { firePistol, meleeSwing, updateBullets, updateThugs } from './combat.js';
-import { startMission, updateMissions, updatePickups, currentMission } from './missions.js';
+import { startMission, updateMissions, updatePickups, currentMission, respawnMissionCrew } from './missions.js';
 import { drawWorld, drawEntities } from './render.js';
 import { drawHUD, drawTitle, drawPause, drawEndScreen } from './hud.js';
 import { applyShot } from './shots.js';
@@ -133,8 +133,8 @@ function createGame(canvas) {
   };
   game.hasSave = !!game.loadSave();
   spawnParkedCars(game);
-  spawnPedestrians(game, 34);
-  for (let i = 0; i < 9; i += 1) spawnTrafficCar(game);
+  spawnPedestrians(game, CFG.pedCount);
+  for (let i = 0; i < CFG.trafficTarget; i += 1) spawnTrafficCar(game);
   return game;
 }
 
@@ -172,10 +172,18 @@ function continueGame(game) {
   game.player.y = save.y;
   game.player.health = save.health;
   game.player.cash = save.cash;
+  game.player.car = null;
   game.missionIndex = Math.min(save.missionIndex, 4);
   game.missionStep = 0;
   game.missionActive = false;
   game.startMissionTimer = 0.6;
+  // The save records the heat; restore it, and drop the police that were
+  // chasing a player who no longer stands where the save was made.
+  game.wanted = save.wanted || 0;
+  game.lastCrimeAt = game.elapsed;
+  game.wantedTimer = 0;
+  game.police = [];
+  game.thugs = [];
   game.state = 'playing';
   game.sound.ensure();
   game.addMessage('Back on the streets of Neon Bay.');
@@ -194,6 +202,9 @@ function respawnAfterEnd(game) {
   game.thugs = [];
   game.state = 'playing';
   game.addMessage(wasBusted ? 'Mara posted bail. $200 gone.' : 'Patched up and back out there.');
+  // The job picks up where it was left — and if it was a fight, the crew
+  // is back too, so a bust cannot skip the boss.
+  respawnMissionCrew(game);
 }
 
 function updatePlaying(game, dt) {
@@ -228,11 +239,19 @@ function updatePlaying(game, dt) {
   else if (input.mouseDown && !game.dialogue) firePistol(game);
 
   if (p.car) {
-    drivePlayerCar(game, p.car, dt);
-    p.x = p.car.x;
-    p.y = p.car.y;
-    p.angle = p.car.angle;
-    carHitsPedestrian(game, p.car);
+    // A wrecked car is done: the driver is thrown out instead of driving
+    // a burning shell around the city.
+    if (p.car.wrecked) {
+      p.car = null;
+      game.addMessage('Your car is wrecked — you bail out.');
+      game.sound.hit();
+    } else {
+      drivePlayerCar(game, p.car, dt);
+      p.x = p.car.x;
+      p.y = p.car.y;
+      p.angle = p.car.angle;
+      carHitsPedestrian(game, p.car);
+    }
   } else {
     updatePlayerOnFoot(game, dt);
   }
@@ -241,7 +260,7 @@ function updatePlaying(game, dt) {
   }
   // Keep the streets busy.
   const traffic = game.cars.filter((c) => c.owner === 'traffic' && c.kind === 'civilian' && !c.wrecked);
-  if (traffic.length < 9) spawnTrafficCar(game);
+  if (traffic.length < CFG.trafficTarget) spawnTrafficCar(game);
   game.cars = game.cars.filter((c) => !c.wrecked || c.owner === 'player' || c.kind === 'police');
   updatePedestrians(game, dt);
   updatePolice(game, dt);

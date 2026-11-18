@@ -6,6 +6,7 @@ import { CFG } from './config.js';
 import { distance } from './random.js';
 import { spawnThug } from './combat.js';
 import { addWanted } from './police.js';
+import { healPlayer } from './player.js';
 
 export const MISSIONS = [
   {
@@ -110,6 +111,7 @@ export function startMission(game, index) {
   game.missionStep = 0;
   game.missionTimer = 0;
   game.holdProgress = 0;
+  game.justStole = false;
   game.missionActive = true;
   game.setDialogue(mission.giver, mission.briefing);
   game.addMessage(`${mission.title} started.`);
@@ -119,6 +121,9 @@ export function startMission(game, index) {
 function advanceStep(game) {
   game.missionStep += 1;
   game.holdProgress = 0;
+  // Each timed step gets its own full timer: the clock restarts here,
+  // instead of carrying the previous step's elapsed time into the next one.
+  game.missionTimer = 0;
   const mission = currentMission(game);
   if (mission && game.missionStep >= mission.steps.length) {
     completeMission(game);
@@ -153,27 +158,46 @@ function failMissionTimer(game) {
 function spawnPierCrew(game) {
   game.collectedDrops = 0;
   const pier = game.world.spots.pier;
+  // The pier spans x 2752-3152: every thug and drop must stand on its
+  // boards, not in the water past its east end (a drop at pier.x + 160
+  // was uncollectable and soft-locked the mission).
   spawnThug(game, pier.x - 60, pier.y - 30);
   spawnThug(game, pier.x + 40, pier.y + 40);
-  spawnThug(game, pier.x + 120, pier.y - 20);
+  spawnThug(game, pier.x + 90, pier.y - 20);
   spawnThug(game, pier.x - 120, pier.y + 50);
   // Three cash drops along the pier.
   game.pickups.push(
-    { x: pier.x - 80, y: pier.y - 40, kind: 'cash', taken: false },
-    { x: pier.x + 60, y: pier.y + 30, kind: 'cash', taken: false },
-    { x: pier.x + 160, y: pier.y - 10, kind: 'cash', taken: false },
+    { x: pier.x - 100, y: pier.y - 40, kind: 'cash', taken: false },
+    { x: pier.x + 10, y: pier.y + 30, kind: 'cash', taken: false },
+    { x: pier.x + 90, y: pier.y - 10, kind: 'cash', taken: false },
   );
 }
 
 function spawnKingCrew(game) {
-  const point = game.world.spots.lighthouse;
+  // The lighthouse stands in the water; its crew waits on the beach
+  // (the dry strip x 2816-2944), not out in the bay where no one can
+  // reach them on foot.
+  const beach = [[2880, 260], [2910, 380], [2860, 440], [2920, 300]];
   for (let i = 0; i < 4; i += 1) {
-    spawnThug(game, point.x - 140 + i * 70, point.y + 90 + (i % 2) * 60);
+    spawnThug(game, beach[i][0], beach[i][1]);
   }
-  const king = spawnThug(game, point.x, point.y + 40);
+  const king = spawnThug(game, 2900, 340);
   king.health = 220;
   king.boss = true;
   king.speed = 165;
+}
+
+// After a bust or a death the fight must be fought again: respawning wipes
+// the crew, so a 'defeat' step would otherwise complete itself with no one
+// left to fight, and a 'collect' step would have no drops left to pick up.
+export function respawnMissionCrew(game) {
+  const mission = currentMission(game);
+  if (!mission || !game.missionActive) return;
+  const step = currentStep(game);
+  if (!step) return;
+  if (step.kind === 'defeat' && mission.id === 'pier-pressure') spawnPierCrew(game);
+  else if (step.kind === 'defeat' && mission.id === 'king-tide') spawnKingCrew(game);
+  else if (step.kind === 'collect' && mission.id === 'pier-pressure') spawnPierCrew(game);
 }
 
 export function updateMissions(game, dt) {
@@ -208,7 +232,13 @@ export function updateMissions(game, dt) {
       advanceStep(game);
     }
   } else if (step.kind === 'steal') {
-    if (player.car) advanceStep(game);
+    // A theft, not just a seat: the player must have lifted a car they did
+    // not already own since this job started. Getting back into their own
+    // starter car does not count.
+    if (game.justStole) {
+      game.justStole = false;
+      advanceStep(game);
+    }
   } else if (step.kind === 'collect') {
     if ((game.collectedDrops || 0) >= step.count) advanceStep(game);
   } else if (step.kind === 'hold') {
@@ -236,8 +266,15 @@ export function updatePickups(game, dt) {
     if (pk.taken) continue;
     if (distance(pos.x, pos.y, pk.x, pk.y) < 34) {
       pk.taken = true;
-      if (pk.kind === 'cash') game.collectedDrops = (game.collectedDrops || 0) + 1;
-      game.addCash(pk.kind === 'cash' ? 150 : 100, 'Cash drop collected');
+      if (pk.kind === 'cash') {
+        game.collectedDrops = (game.collectedDrops || 0) + 1;
+        game.addCash(150, 'Cash drop collected');
+      } else if (pk.kind === 'health') {
+        healPlayer(game, CFG.healthPickupHeal);
+        game.addMessage(`+${CFG.healthPickupHeal} health — patched up.`);
+      } else {
+        game.addCash(100, 'Package collected');
+      }
       game.sound.cash();
       game.addParticles(pk.x, pk.y, '#ffcf3f', 10);
     }

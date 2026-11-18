@@ -55,21 +55,30 @@ export function buildCity(seed) {
         }
         continue;
       }
+      // Buildings sit further inside their block than the block edge: a
+      // roof that reaches the block's edge pinches the road beside it to
+      // a corridor barely wider than a car, and a car brushing the corner
+      // wedges itself in. The inset keeps every road comfortably passable.
+      const inset = 14;
+      const bLeft = left + inset;
+      const bTop = top + inset;
+      const bRight = right - inset;
+      const bBottom = bottom - inset;
       // One or two buildings per block, with a gap between them.
       const splitVertical = rng.chance(0.5);
       const color = rng.pick(PALETTE.buildingRoof);
       if (splitVertical) {
-        const mid = (left + right) / 2;
-        buildings.push(makeBuilding(rng, left, top, mid - 8, bottom, color));
-        buildings.push(makeBuilding(rng, mid + 8, top, right, bottom, rng.pick(PALETTE.buildingRoof)));
+        const mid = (bLeft + bRight) / 2;
+        buildings.push(makeBuilding(rng, bLeft, bTop, mid - 8, bBottom, color));
+        buildings.push(makeBuilding(rng, mid + 8, bTop, bRight, bBottom, rng.pick(PALETTE.buildingRoof)));
       } else {
-        buildings.push(makeBuilding(rng, left, top, right, bottom, color));
+        buildings.push(makeBuilding(rng, bLeft, bTop, bRight, bBottom, color));
       }
     }
   }
 
   // Street trees along a few sidewalks, for colour from above.
-  for (let i = 0; i < 46; i += 1) {
+  for (let i = 0; i < 70; i += 1) {
     const road = rng.pick(ROAD_CENTERS);
     const along = rng.range(140, CFG.worldSize - 140);
     const side = rng.chance(0.5) ? -1 : 1;
@@ -78,7 +87,22 @@ export function buildCity(seed) {
     if (x < WATER_X - 40) trees.push({ x, y, r: rng.range(8, 12) });
   }
 
-  return { buildings, parks, trees, spots, seed };
+  // Street props on the sidewalks — benches, hydrants and lamps — so the
+  // streets read as lived-in from above, not just road and roof.
+  const props = [];
+  for (let i = 0; i < 64; i += 1) {
+    const road = rng.pick(ROAD_CENTERS);
+    const along = rng.range(140, CFG.worldSize - 140);
+    const side = rng.chance(0.5) ? -1 : 1;
+    const kind = rng.pick(['bench', 'hydrant', 'lamp']);
+    if (rng.chance(0.5)) {
+      if (road + side * 52 < WATER_X - 40) props.push({ x: road + side * 52, y: along, kind });
+    } else if (along < WATER_X - 40) {
+      props.push({ x: along, y: road + side * 52, kind });
+    }
+  }
+
+  return { buildings, parks, trees, props, spots, seed };
 }
 
 function makeBuilding(rng, left, top, right, bottom, color) {

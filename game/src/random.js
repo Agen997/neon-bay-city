@@ -39,6 +39,26 @@ export function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
+// Approximately normal value around `mean` with spread `spread`, from two
+// uniform draws, so crowds vary naturally instead of uniformly.
+export function gauss(rng, mean, spread) {
+  const u = rng.next() + rng.next() - 1;
+  return mean + u * spread;
+}
+
+// Shuffle a copy of a list in place order, so a street deals its colours
+// out instead of rolling the same one twice in a row.
+export function shuffle(rng, list) {
+  const out = list.slice();
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng.next() * (i + 1));
+    const tmp = out[i];
+    out[i] = out[j];
+    out[j] = tmp;
+  }
+  return out;
+}
+
 export function distance(x1, y1, x2, y2) {
   return Math.hypot(x2 - x1, y2 - y1);
 }

@@ -27,6 +27,27 @@ export const CFG = {
   meleeRange: 46,
   meleeCooldown: 0.45,
   bulletSpeed: 900,
+  // A thug shot down sometimes drops a health pack.
+  thugHealthDropChance: 0.25,
+  healthPickupHeal: 30,
+  // NBPD foot officers: how often a shot lands and how hard it hits.
+  officerHitChance: 0.35,
+  officerDamage: 5,
+  // A police cruiser ramming the player's car, damage per second of contact.
+  // The ram also has a cooldown (see police.js): without one a faster
+  // cruiser stays glued to the player's car and the damage never stops.
+  policeRamDps: 26,
+  // Seconds a cruiser backs off after ramming before it can ram again.
+  policeRamCooldown: 1.5,
+  // The player's ride takes more punishment than a traffic car: a parked
+  // car should not be wrecked by two seconds of ramming while its driver
+  // reads a mission briefing.
+  playerCarHealth: 160,
+  // Crowd and traffic density.
+  pedCount: 44,
+  trafficTarget: 12,
+  // Engine sound: at most one blip per interval, not one per frame.
+  engineSoundMs: 90,
   // Wanted system.
   wantedMax: 5,
   wantedDecaySeconds: 26,

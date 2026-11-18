@@ -58,19 +58,28 @@ export function drawHUD(ctx, game) {
   ctx.fillStyle = PALETTE.hudAccent;
   ctx.textAlign = 'center';
   ctx.fillText(objective, W / 2, 38);
+  // Job-progress pips: five dots under the banner, filled as jobs complete.
+  const done = Math.min(game.missionIndex, 5);
+  const pipW = 5 * 22;
+  for (let i = 0; i < 5; i += 1) {
+    ctx.fillStyle = i < done ? PALETTE.hudAccent : 'rgba(255,255,255,0.35)';
+    ctx.beginPath();
+    ctx.arc((W - pipW) / 2 + 11 + i * 22, 66, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
   // Mission timer, under the banner.
   const step = currentStep(game);
   if (step && step.timer && game.missionActive) {
     const left = Math.max(0, step.timer - game.missionTimer);
     ctx.fillStyle = left < 20 ? '#ff5252' : '#fff';
     ctx.font = 'bold 16px sans-serif';
-    ctx.fillText(`${Math.ceil(left)}s left`, W / 2, 74);
+    ctx.fillText(`${Math.ceil(left)}s left`, W / 2, 92);
   }
   // Hold-the-vault progress.
   if (step && step.kind === 'hold' && game.holdProgress > 0) {
-    panel(ctx, (W - 260) / 2, 84, 260, 22);
+    panel(ctx, (W - 260) / 2, 100, 260, 22);
     ctx.fillStyle = PALETTE.neonCyan;
-    ctx.fillRect((W - 260) / 2 + 6, 89, 248 * (game.holdProgress / step.duration), 12);
+    ctx.fillRect((W - 260) / 2 + 6, 105, 248 * (game.holdProgress / step.duration), 12);
   }
   // Bottom-left: messages.
   ctx.textAlign = 'left';
@@ -177,9 +186,9 @@ function bigTitle(ctx, game) {
   const W = game.viewW;
   const H = game.viewH;
   const grad = ctx.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0, 'rgba(10,10,40,0.88)');
-  grad.addColorStop(0.55, 'rgba(40,10,60,0.72)');
-  grad.addColorStop(1, 'rgba(255,77,166,0.35)');
+  grad.addColorStop(0, 'rgba(10,10,40,0.72)');
+  grad.addColorStop(0.55, 'rgba(40,10,60,0.55)');
+  grad.addColorStop(1, 'rgba(255,77,166,0.28)');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';

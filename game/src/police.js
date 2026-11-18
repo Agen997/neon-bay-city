@@ -44,7 +44,7 @@ export function spawnPoliceCar(game) {
   car.owner = 'police';
   car.speed = CFG.policeSpeed * 0.9;
   game.cars.push(car);
-  game.police.push({ kind: 'car', car, arrestTimer: 0 });
+  game.police.push({ kind: 'car', car, arrestTimer: 0, ramCooldown: 0 });
   return car;
 }
 
@@ -73,9 +73,21 @@ function updatePoliceCar(game, unit, dt) {
     return;
   }
   const pos = playerPosition(game);
-  const targetAngle = Math.atan2(pos.y - car.y, pos.x - car.x);
+  // Heat off: the cruiser breaks off the chase and leaves town. Once it is
+  // far enough away it is gone, instead of hunting the player forever.
+  // After a ram the cruiser also backs off: it turns away and coasts while
+  // its ram cooldown runs, so it cannot stay glued to the player's car
+  // dealing damage every frame.
+  const leaving = game.wanted === 0;
+  unit.ramCooldown = Math.max(0, (unit.ramCooldown || 0) - dt);
+  const backingOff = unit.ramCooldown > 0;
+  const targetAngle = leaving || backingOff
+    ? Math.atan2(car.y - pos.y, car.x - pos.x)
+    : Math.atan2(pos.y - car.y, pos.x - car.x);
   car.angle += angleDelta(car.angle, targetAngle) * Math.min(1, dt * 2.2);
-  car.speed = Math.min(CFG.policeSpeed, car.speed + 320 * dt);
+  car.speed = backingOff
+    ? Math.min(car.speed, 200)
+    : Math.min(CFG.policeSpeed, car.speed + 320 * dt);
   const nx = car.x + Math.cos(car.angle) * car.speed * dt;
   const ny = car.y + Math.sin(car.angle) * car.speed * dt;
   // Police drive through the city, not through buildings: slide along walls.
@@ -86,22 +98,39 @@ function updatePoliceCar(game, unit, dt) {
   car.x = clamp(car.x, 24, 2880);
   car.y = clamp(car.y, 24, 3080);
   car.sirenPhase += dt;
-  // Ram the player's car, or the player on foot.
   const d = distance(car.x, car.y, pos.x, pos.y);
-  if (d < 46) {
+  if (leaving) {
+    if (d > 900) unit.dead = true;
+    return;
+  }
+  // Ram the player's car, or the player on foot. One ram per cooldown:
+  // the cruiser bounces off and has to come back for another one.
+  if (d < 46 && unit.ramCooldown <= 0) {
     if (pos.inCar && game.player.car) {
-      damageCar(game, game.player.car, 26 * dt * 4);
+      damageCar(game, game.player.car, CFG.policeRamDps * dt);
       game.shake = Math.min(10, game.shake + 3);
     } else if (!pos.inCar) {
       damagePlayer(game, 12 * dt * 4, 'a police cruiser');
     }
     car.speed *= 0.55;
+    unit.ramCooldown = CFG.policeRamCooldown;
   }
 }
 
 function updateFootOfficer(game, unit, dt) {
   const pos = playerPosition(game);
   const d = distance(unit.x, unit.y, pos.x, pos.y);
+  // Heat off: the officer stands down and walks away, and is gone once
+  // far enough from the player.
+  if (game.wanted === 0) {
+    unit.arrestTimer = 0;
+    const away = Math.atan2(unit.y - pos.y, unit.x - pos.x);
+    unit.angle = away;
+    unit.x += Math.cos(away) * unit.speed * dt;
+    unit.y += Math.sin(away) * unit.speed * dt;
+    if (d > 800) unit.dead = true;
+    return;
+  }
   unit.angle = Math.atan2(pos.y - unit.y, pos.x - unit.x);
   if (d > 34) {
     unit.x += Math.cos(unit.angle) * unit.speed * dt;
@@ -118,13 +147,19 @@ function updateFootOfficer(game, unit, dt) {
   } else {
     unit.arrestTimer = 0;
   }
-  // Officers fire at a fleeing player who is already wanted.
+  // Officers fire at a fleeing player who is already wanted. A driver is
+  // behind steel: the bullets hit the car, not the person inside it.
   unit.shootCooldown -= dt;
   if (unit.shootCooldown <= 0 && d < 380 && d > 60) {
     unit.shootCooldown = game.rng.range(1.1, 1.9);
-    if (game.rng.chance(0.45)) {
-      damagePlayer(game, 6, 'an NBPD officer');
-      game.addParticles(pos.x, pos.y, '#ffd166', 4);
+    if (game.rng.chance(CFG.officerHitChance)) {
+      if (pos.inCar && game.player.car) {
+        damageCar(game, game.player.car, CFG.officerDamage);
+        game.addParticles(game.player.car.x, game.player.car.y, '#ffd166', 4);
+      } else {
+        damagePlayer(game, CFG.officerDamage, 'an NBPD officer');
+        game.addParticles(pos.x, pos.y, '#ffd166', 4);
+      }
     }
     game.sound.shoot();
   }

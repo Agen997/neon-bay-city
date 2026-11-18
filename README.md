@@ -33,13 +33,13 @@ Then open http://localhost:8080 in a desktop browser. No build step, no network 
 
 ## What is in the city
 
-- **A city to explore** — eleven roads each way, colourful blocks, parks, a plaza, a night market, a marina, a pier and the bay itself, all generated from a seed.
-- **On foot and by car** — walk the sidewalks, steal any parked or passing car, and drive it through traffic.
+- **A city to explore** — eleven roads each way, colourful blocks, parks, a plaza, a night market, a marina, a pier and the bay itself, all generated from a seed. Crosswalks mark every junction; benches, hydrants and lamps line the sidewalks; tall roofs carry helipads.
+- **On foot and by car** — walk the sidewalks, steal any parked or passing car, and drive it through traffic. Buildings sit back from the road edge, so every street stays passable and a car wedged on a corner can back out.
 - **Traffic and pedestrians** — cars cruise the roads and turn at junctions; crowds stroll the sidewalks and run when shots are fired.
-- **A wanted system** — steal a car, hit a pedestrian or shoot an officer and the stars climb from 0 to 5. NBPD cruisers chase and ram you; foot officers close in to arrest you. Lay low and the heat cools off.
-- **Combat** — a pistol with mouse aim and a melee swing, against rival Tide King thugs and the police.
-- **Five story jobs** — steal your first wheels, run a timed delivery, take back the pier cash, hold the Bay Trust vault, and finish King at Lighthouse Point. Each job pays cash and starts the next.
-- **A HUD with a minimap** — health, cash, wanted stars, the clock, the current objective and a live minimap with the mission target and every police unit.
+- **A wanted system** — steal a car, hit a pedestrian or shoot an officer and the stars climb from 0 to 5. NBPD cruisers chase and ram you; foot officers close in to arrest you, and shoot at your car rather than through it. Lay low and the heat cools off — and once it does, the police break off and leave instead of hunting you forever.
+- **Combat** — a pistol with mouse aim and a melee swing, against rival Tide King thugs and the police. Thugs charge the last stretch, and a downed thug sometimes leaves a health pack behind.
+- **Five story jobs** — steal your first wheels, run a timed delivery, take back the pier cash, hold the Bay Trust vault, and finish King at Lighthouse Point. Each job pays cash and starts the next. A job's timer restarts with each step, and getting busted mid-fight brings the crew back instead of skipping the fight.
+- **A HUD with a minimap** — health, cash, wanted stars, the clock, the current objective, five job-progress pips, and a live minimap with the mission target and every police unit.
 - **Start, pause and save** — a title screen, a pause menu, and autosaves (plus a save on pause) so you can continue where you left off.
 - **Sound** — every sound is synthesized live with WebAudio: shots, pickups, mission jingles, sirens and a title bass pulse. No audio files.
 
@@ -67,4 +67,8 @@ Vanilla JavaScript, no libraries, no build step. The source is split into one fi
 
 ## Screenshots
 
-The four screenshots in `screenshots/` are real renders of this game's own code, taken in a desktop browser from the deterministic `?shot=` scenes in `shots.json`: the title over downtown, driving in traffic, a three-star police chase, and the pier job in progress.
+The four screenshots in `screenshots/` are real renders of this game's own code, taken in a desktop browser from the deterministic `?shot=` scenes in `shots.json`: the title over downtown, driving in traffic, a three-star police chase, and the pier job in progress. Each shot is staged to show several systems at once — the city, traffic, pedestrians, wanted stars, police, the objective and the minimap — and each scene is described in `shots.json`.
+
+## Playthrough-verified
+
+The game has been played end to end in a headless desktop browser by a scripted driver using the real keyboard and mouse: all five jobs including the King boss fight and the win screen, the busted flow, wanted decay back to zero, save then reload and Continue, pistol and melee combat, stealing and driving, and a police chase — with no page or console errors.
