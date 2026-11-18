@@ -3,10 +3,11 @@
 // done by reaching a place, holding it, collecting drops, or clearing
 // the thugs the step spawns. Finishing a job pays cash and starts the next.
 import { CFG } from './config.js';
-import { distance } from './random.js';
+import { distance, randomPointInCircle, clamp } from './random.js';
 import { spawnThug } from './combat.js';
 import { addWanted } from './police.js';
 import { healPlayer } from './player.js';
+import { LIGHTHOUSE_BEACH } from './world.js';
 
 export const MISSIONS = [
   {
@@ -73,8 +74,8 @@ export const MISSIONS = [
       'Mara Voss: "Take his crew down, then come home. Neon Bay is ours."',
     ],
     steps: [
-      { kind: 'goto', text: 'Reach Lighthouse Point', spot: 'lighthouse', radius: 110 },
-      { kind: 'defeat', text: 'Defeat King and his crew' },
+      { kind: 'goto', text: 'Reach Lighthouse Point', spot: 'lighthouse', radius: CFG.lighthouseGotoRadius },
+      { kind: 'defeat', text: 'Defeat King and his crew on the beach' },
       { kind: 'goto', text: 'Return to Mara’s Garage', spot: 'hideout', radius: 90 },
     ],
   },
@@ -142,6 +143,10 @@ function completeMission(game) {
     game.won = true;
     game.state = 'won';
     game.addMessage('All jobs done — Neon Bay is yours.');
+    // A finished game has nothing to continue: clear the save so the
+    // title offers a fresh start instead of a continue into a won game.
+    if (game.clearSave) game.clearSave();
+    game.hasSave = false;
     return;
   }
   game.startMissionTimer = 1.2;
@@ -173,18 +178,29 @@ function spawnPierCrew(game) {
   );
 }
 
-function spawnKingCrew(game) {
+export function spawnKingCrew(game) {
   // The lighthouse stands in the water; its crew waits on the beach
   // (the dry strip x 2816-2944), not out in the bay where no one can
-  // reach them on foot.
-  const beach = [[2880, 260], [2910, 380], [2860, 440], [2920, 300]];
+  // reach them on foot. The crew is scattered over the beach around the
+  // lighthouse point, and every thug is leashed to a rectangle of sand:
+  // a thug that chased too far walks back instead of following the
+  // player into town, so the fight stays on the beach it started on.
+  // The lighthouse goto circle reaches the whole beach now (radius 220
+  // from the point in the bay), so the player triggers the fight from
+  // the beach itself instead of hugging the water's edge.
+  const leash = { x0: 2830, y0: 170, x1: 2935, y1: 510, cx: LIGHTHOUSE_BEACH.x, cy: LIGHTHOUSE_BEACH.y };
   for (let i = 0; i < 4; i += 1) {
-    spawnThug(game, beach[i][0], beach[i][1]);
+    const spot = randomPointInCircle(game.rng, LIGHTHOUSE_BEACH.x, LIGHTHOUSE_BEACH.y, 110);
+    const x = clamp(spot.x, 2820, 2930);
+    const y = clamp(spot.y, 200, 480);
+    spawnThug(game, x, y, { leash });
   }
-  const king = spawnThug(game, 2900, 340);
+  const king = spawnThug(game, LIGHTHOUSE_BEACH.x + 5, LIGHTHOUSE_BEACH.y + 10, { leash });
   king.health = 220;
   king.boss = true;
   king.speed = 165;
+  game.sound.boss();
+  game.addMessage('King is on the beach — finish him here.');
 }
 
 // After a bust or a death the fight must be fought again: respawning wipes

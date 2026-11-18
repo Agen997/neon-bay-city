@@ -24,10 +24,21 @@ export function createPlayer(x, y) {
 
 export function playerAimAngle(game) {
   const p = game.player;
+  // Before the mouse has ever moved, aim where Rex is going: a fresh
+  // player who only uses the keyboard would otherwise always aim at the
+  // top-left corner of the screen.
+  if (!game.input.mouseMoved && (game.input.moveX !== 0 || game.input.moveY !== 0)) {
+    return Math.atan2(game.input.moveY, game.input.moveX);
+  }
   const cam = game.camera;
   const worldMouseX = cam.x + (game.input.mouseX - game.viewW / 2) / cam.zoom;
   const worldMouseY = cam.y + (game.input.mouseY - game.viewH / 2) / cam.zoom;
   return Math.atan2(worldMouseY - p.y, worldMouseX - p.x);
+}
+
+// One hit from going down: the HUD throbs a red edge at this point.
+export function isLowHealth(player) {
+  return player.health > 0 && player.health < 30;
 }
 
 export function updatePlayerOnFoot(game, dt) {
@@ -50,17 +61,26 @@ export function updatePlayerOnFoot(game, dt) {
 }
 
 export function nearestCarToPlayer(game, maxDist) {
-  let best = null;
-  let bestD = maxDist;
+  // Prefer a car Rex does not own: pressing E beside your own ride and
+  // a car worth stealing should steal the car, not get you back into
+  // the one you just parked. Only when no unowned car is in reach does
+  // E take the nearest car, owned or not.
+  let bestUnowned = null;
+  let bestUnownedD = maxDist;
+  let bestOwned = null;
+  let bestOwnedD = maxDist;
   for (const car of game.cars) {
     if (car.wrecked) continue;
     const d = distance(game.player.x, game.player.y, car.x, car.y);
-    if (d < bestD) {
-      best = car;
-      bestD = d;
+    if (!car.owned && d < bestUnownedD) {
+      bestUnowned = car;
+      bestUnownedD = d;
+    } else if (car.owned && d < bestOwnedD) {
+      bestOwned = car;
+      bestOwnedD = d;
     }
   }
-  return best;
+  return bestUnowned || bestOwned;
 }
 
 // E: step into the nearest car, or step out of the one being driven.

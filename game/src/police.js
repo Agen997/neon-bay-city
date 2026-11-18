@@ -52,10 +52,20 @@ export function spawnFootOfficer(game) {
   const pos = playerPosition(game);
   const rng = game.rng;
   const angle = rng.range(0, Math.PI * 2);
+  // Spawn on a road near the player, not at a random point: a random
+  // point can land inside a building, and an officer who starts inside
+  // one can never walk out of it to make the arrest.
+  let x = pos.x + Math.cos(angle) * rng.range(280, 420);
+  let y = pos.y + Math.sin(angle) * rng.range(280, 420);
+  if (Math.abs(x - nearestRoadCenter(x)) < Math.abs(y - nearestRoadCenter(y))) {
+    x = nearestRoadCenter(x);
+  } else {
+    y = nearestRoadCenter(y);
+  }
   const officer = {
     kind: 'foot',
-    x: clamp(pos.x + Math.cos(angle) * rng.range(280, 420), 120, 2880),
-    y: clamp(pos.y + Math.sin(angle) * rng.range(280, 420), 120, 3080),
+    x: clamp(x, 120, 2880),
+    y: clamp(y, 120, 3080),
     angle: 0,
     speed: 195,
     health: 60,
@@ -120,22 +130,37 @@ function updatePoliceCar(game, unit, dt) {
 function updateFootOfficer(game, unit, dt) {
   const pos = playerPosition(game);
   const d = distance(unit.x, unit.y, pos.x, pos.y);
+  // Step in a direction, sliding around a building instead of walking
+  // through it: try the direction, then deflections around the circle.
+  // A single pair of deflections strands an officer in a building's
+  // inside corner, so the search covers the full half-circle.
+  const step = (angle) => {
+    const s = unit.speed * dt;
+    const deflections = [0, Math.PI / 3, -Math.PI / 3, (2 * Math.PI) / 3, (-2 * Math.PI) / 3, Math.PI];
+    for (const deflect of deflections) {
+      const a = angle + deflect;
+      const nx = unit.x + Math.cos(a) * s;
+      const ny = unit.y + Math.sin(a) * s;
+      if (!collidesSolid(game.world, nx, ny, 12)) {
+        unit.x = nx;
+        unit.y = ny;
+        return true;
+      }
+    }
+    return false;
+  };
   // Heat off: the officer stands down and walks away, and is gone once
   // far enough from the player.
   if (game.wanted === 0) {
     unit.arrestTimer = 0;
     const away = Math.atan2(unit.y - pos.y, unit.x - pos.x);
     unit.angle = away;
-    unit.x += Math.cos(away) * unit.speed * dt;
-    unit.y += Math.sin(away) * unit.speed * dt;
+    step(away);
     if (d > 800) unit.dead = true;
     return;
   }
   unit.angle = Math.atan2(pos.y - unit.y, pos.x - unit.x);
-  if (d > 34) {
-    unit.x += Math.cos(unit.angle) * unit.speed * dt;
-    unit.y += Math.sin(unit.angle) * unit.speed * dt;
-  }
+  if (d > 34) step(unit.angle);
   // Close enough on foot: the arrest begins.
   if (!pos.inCar && d < 40) {
     unit.arrestTimer += dt;
@@ -167,13 +192,16 @@ function updateFootOfficer(game, unit, dt) {
 
 export function updatePolice(game, dt) {
   const level = game.wanted;
-  // Wanted decays only while the player stays out of trouble.
+  // Wanted decays only while the player stays out of trouble: once 26
+  // quiet seconds have passed, a star drops every 6 seconds. The clock
+  // is the last crime, not the last star lost — resetting it on every
+  // decay would re-impose the 26-second wait per star, and the heat
+  // would take over a minute and a half to cool off from three stars.
   if (level > 0 && game.elapsed - game.lastCrimeAt > CFG.wantedDecaySeconds) {
     game.wantedTimer += dt;
     if (game.wantedTimer > 6) {
       game.wanted -= 1;
       game.wantedTimer = 0;
-      game.lastCrimeAt = game.elapsed;
       game.addMessage(`Heat cooling off — wanted level ${game.wanted}.`);
     }
   }

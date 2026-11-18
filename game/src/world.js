@@ -8,6 +8,12 @@ import { makeRng } from './random.js';
 const ROAD_CENTERS = [192, 448, 704, 960, 1216, 1472, 1728, 1984, 2240, 2496, 2752];
 export const WATER_X = 2944; // The bay starts here; east of it is open water.
 export const PIER = { x: 2752, y: 1536, w: 400, h: 128 };
+// The lighthouse beach: the dry strip east of the last road, under the
+// lighthouse that stands in the bay. The King fight is staged here.
+export const LIGHTHOUSE_BEACH = { x: 2900, y: 340 };
+// The sand cove the renderer draws around the beach, wider than the thin
+// sand strip along the rest of the bay.
+export const BEACH_COVE = { x: 2860, y: 180, w: 84, h: 320 };
 
 export function buildCity(seed) {
   const rng = makeRng(seed);
@@ -133,6 +139,12 @@ export function isOnPier(x, y) {
   return x >= PIER.x && x <= PIER.x + PIER.w && y >= PIER.y && y <= PIER.y + PIER.h;
 }
 
+// The lighthouse beach: dry ground between the last road and the bay,
+// around the cove the renderer draws.
+export function isOnBeach(x, y) {
+  return x >= BEACH_COVE.x && x < WATER_X && y >= BEACH_COVE.y && y <= BEACH_COVE.y + BEACH_COVE.h;
+}
+
 export function isWater(x, y) {
   if (isOnPier(x, y)) return false;
   return x >= WATER_X;
@@ -172,5 +184,10 @@ export function moveWithCollision(world, entity, dx, dy, radius) {
 export function randomStreetPoint(rng) {
   const road = rng.pick(ROAD_CENTERS);
   const along = rng.range(160, CFG.worldSize - 200);
-  return rng.chance(0.5) ? { x: road, y: along } : { x: along, y: road };
+  const point = rng.chance(0.5) ? { x: road, y: along } : { x: along, y: road };
+  // Never hand back a point in the bay: the east end of a horizontal road
+  // runs past the water's edge, and a pedestrian spawned there would be
+  // stuck in the water for the rest of the game.
+  point.x = Math.min(point.x, WATER_X - 80);
+  return point;
 }

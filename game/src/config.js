@@ -43,6 +43,12 @@ export const CFG = {
   // car should not be wrecked by two seconds of ramming while its driver
   // reads a mission briefing.
   playerCarHealth: 160,
+  // The King fight at Lighthouse Point: the lighthouse stands in the
+  // bay, so the goto circle must reach the whole beach strip (the dry
+  // ground east of the last road), not just the water's edge. The crew
+  // is leashed to a rectangle of sand (see missions.js), so the fight
+  // stays on the beach.
+  lighthouseGotoRadius: 220,
   // Crowd and traffic density.
   pedCount: 44,
   trafficTarget: 12,

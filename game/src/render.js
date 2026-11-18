@@ -2,7 +2,7 @@
 // Roads, roofs, the bay, the pier, cars, crowds and police are all drawn
 // from rectangles and circles, so the game needs no image files at all.
 import { CFG, PALETTE } from './config.js';
-import { WATER_X, PIER, roadCenters } from './world.js';
+import { WATER_X, PIER, BEACH_COVE, roadCenters } from './world.js';
 import { stepTarget } from './missions.js';
 
 function inView(game, x, y, margin) {
@@ -30,6 +30,9 @@ export function drawWorld(ctx, game) {
   ctx.fillRect(WATER_X + 26, 0, size - WATER_X - 26, size);
   ctx.fillStyle = PALETTE.sand;
   ctx.fillRect(WATER_X - 34, 0, 34, size);
+  // The lighthouse beach is wider than the thin strip along the bay: a
+  // sandy cove under the lighthouse, where the King fight happens.
+  ctx.fillRect(BEACH_COVE.x, BEACH_COVE.y, BEACH_COVE.w, BEACH_COVE.h);
   // Wave lines on the water.
   ctx.strokeStyle = 'rgba(255,255,255,0.25)';
   ctx.lineWidth = 3;
@@ -175,8 +178,19 @@ export function drawWorld(ctx, game) {
     ctx.arc(t.x - 3, t.y - 3, t.r * 0.55, 0, Math.PI * 2);
     ctx.fill();
   }
-  // Lighthouse at the point.
+  // Lighthouse at the point, with its beam sweeping the bay.
   const light = world.spots.lighthouse;
+  ctx.save();
+  ctx.translate(light.x, light.y);
+  ctx.rotate(game.elapsed * 0.45);
+  ctx.fillStyle = 'rgba(255,240,180,0.10)';
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(560, -46);
+  ctx.lineTo(560, 46);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
   ctx.fillStyle = '#f2f2f2';
   ctx.beginPath();
   ctx.arc(light.x, light.y, 16, 0, Math.PI * 2);

@@ -12,7 +12,7 @@ import { spawnParkedCars, spawnTrafficCar, updateTrafficCar, drivePlayerCar, car
 import { spawnPedestrians, updatePedestrians } from './traffic.js';
 import { addWanted, updatePolice } from './police.js';
 import { firePistol, meleeSwing, updateBullets, updateThugs } from './combat.js';
-import { startMission, updateMissions, updatePickups, currentMission, respawnMissionCrew } from './missions.js';
+import { startMission, updateMissions, updatePickups, currentMission, objectiveText, respawnMissionCrew } from './missions.js';
 import { drawWorld, drawEntities } from './render.js';
 import { drawHUD, drawTitle, drawPause, drawEndScreen } from './hud.js';
 import { applyShot } from './shots.js';
@@ -131,6 +131,16 @@ function createGame(canvas) {
       return null;
     }
   };
+  // A finished game has nothing to continue: winning clears the save.
+  game.clearSave = () => {
+    try {
+      window.localStorage.removeItem(SAVE_KEY);
+    } catch {
+      // Saving is a courtesy; a blocked store must never stop the game.
+    }
+  };
+  // The live boss thug, if any — the HUD draws his health bar from this.
+  game.bossThug = () => game.thugs.find((t) => t.boss && t.health > 0) || null;
   game.hasSave = !!game.loadSave();
   spawnParkedCars(game);
   spawnPedestrians(game, CFG.pedCount);
@@ -258,8 +268,9 @@ function updatePlaying(game, dt) {
   for (const car of game.cars) {
     if (car.owner !== 'player' && car.kind !== 'police') updateTrafficCar(game, car, dt);
   }
-  // Keep the streets busy.
-  const traffic = game.cars.filter((c) => c.owner === 'traffic' && c.kind === 'civilian' && !c.wrecked);
+  // Keep the streets busy: parked cars do not count toward the moving
+  // traffic target, or the streets would empty out as they are stolen.
+  const traffic = game.cars.filter((c) => c.owner === 'traffic' && c.kind === 'civilian' && !c.wrecked && !c.parked);
   if (traffic.length < CFG.trafficTarget) spawnTrafficCar(game);
   game.cars = game.cars.filter((c) => !c.wrecked || c.owner === 'player' || c.kind === 'police');
   updatePedestrians(game, dt);
@@ -349,6 +360,13 @@ function frame(game, now) {
   // rendering: a click landing during the render must survive to the
   // next frame's update instead of being swallowed.
   input.endFrame();
+  // Keep the screen-reader status line in step with the objective, so
+  // the current job is announced instead of sitting stale.
+  const status = document.getElementById('status');
+  if (status) {
+    const text = game.state === 'playing' ? objectiveText(game) : game.state;
+    if (status.textContent !== text) status.textContent = text;
+  }
   render(game);
   requestAnimationFrame((t) => frame(game, t));
 }

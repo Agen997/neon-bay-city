@@ -5,6 +5,7 @@
 import { CFG, PALETTE, CONTROLS } from './config.js';
 import { objectiveText, currentMission, currentStep, stepTarget } from './missions.js';
 import { WATER_X, roadCenters } from './world.js';
+import { isLowHealth } from './player.js';
 
 function panel(ctx, x, y, w, h) {
   ctx.fillStyle = PALETTE.hudPanel;
@@ -81,6 +82,19 @@ export function drawHUD(ctx, game) {
     ctx.fillStyle = PALETTE.neonCyan;
     ctx.fillRect((W - 260) / 2 + 6, 105, 248 * (game.holdProgress / step.duration), 12);
   }
+  // Boss bar: King's health, while the boss is alive on the beach.
+  const boss = game.bossThug ? game.bossThug() : null;
+  if (boss) {
+    panel(ctx, (W - 300) / 2, 100, 300, 34);
+    ctx.fillStyle = '#ffcf3f';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('KING — TIDE KINGS BOSS', W / 2, 114);
+    ctx.fillStyle = '#222';
+    ctx.fillRect((W - 300) / 2 + 10, 120, 280, 8);
+    ctx.fillStyle = '#e84a4a';
+    ctx.fillRect((W - 300) / 2 + 10, 120, Math.max(0, 280 * (boss.health / 220)), 8);
+  }
   // Bottom-left: messages.
   ctx.textAlign = 'left';
   ctx.font = '14px sans-serif';
@@ -103,6 +117,16 @@ export function drawHUD(ctx, game) {
   if (p.hurtFlash > 0) {
     ctx.fillStyle = `rgba(255,40,40,${p.hurtFlash * 0.35})`;
     ctx.fillRect(0, 0, W, game.viewH);
+  }
+  // Low-health pulse: a red edge that throbs while Rex is one hit from
+  // going down, so the danger reads even without looking at the bar.
+  if (isLowHealth(p)) {
+    const pulse = 0.10 + 0.06 * Math.sin(game.elapsed * 5);
+    ctx.fillStyle = `rgba(255,40,40,${pulse})`;
+    ctx.fillRect(0, 0, W, 10);
+    ctx.fillRect(0, game.viewH - 10, W, 10);
+    ctx.fillRect(0, 0, 10, game.viewH);
+    ctx.fillRect(W - 10, 0, 10, game.viewH);
   }
   drawMinimap(ctx, game);
 }

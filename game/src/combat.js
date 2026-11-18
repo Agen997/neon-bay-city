@@ -3,7 +3,7 @@
 // public is a crime, so combat and the wanted system feed each other.
 import { CFG } from './config.js';
 import { distance, angleTo } from './random.js';
-import { collidesSolid } from './world.js';
+import { collidesSolid, moveWithCollision } from './world.js';
 import { damageCar } from './vehicles.js';
 import { addWanted } from './police.js';
 import { damagePlayer } from './player.js';
@@ -133,7 +133,10 @@ export function updateBullets(game, dt) {
 }
 
 // Rival thugs: simple melee/ranged enemies used by missions 3 and 5.
-export function spawnThug(game, x, y) {
+// opts.leash is a rectangle of home ground {x0, y0, x1, y1, cx, cy}: a
+// leashed thug that chased too far walks back instead of following the
+// player across the map.
+export function spawnThug(game, x, y, opts) {
   const thug = {
     x,
     y,
@@ -141,6 +144,7 @@ export function spawnThug(game, x, y) {
     speed: 150,
     health: 70,
     shootCooldown: game.rng.range(0.8, 1.8),
+    leash: (opts && opts.leash) || null,
   };
   game.thugs.push(thug);
   return thug;
@@ -152,23 +156,42 @@ export function updateThugs(game, dt) {
   for (const thug of game.thugs) {
     if (thug.health <= 0) continue;
     const d = distance(thug.x, thug.y, target.x, target.y);
-    thug.angle = angleTo(thug.x, thug.y, target.x, target.y);
-    if (d > 46) {
-      // Close in — and charge the last stretch, so a thug does not just
-      // shuffle up to the player at one flat speed.
-      const charging = d < 140;
-      const speed = charging ? thug.speed * 1.35 : thug.speed;
-      thug.x += Math.cos(thug.angle) * speed * dt;
-      thug.y += Math.sin(thug.angle) * speed * dt;
-    } else {
-      // Close in: swing at the player.
-      thug.shootCooldown -= dt;
-      if (thug.shootCooldown <= 0) {
-        thug.shootCooldown = 1.0;
-        if (p.car) damageCar(game, p.car, 12);
-        else damagePlayer(game, 9, 'a Tide King thug');
+    let mx = 0;
+    let my = 0;
+    if (thug.leash) {
+      const L = thug.leash;
+      const outside = thug.x < L.x0 || thug.x > L.x1 || thug.y < L.y0 || thug.y > L.y1;
+      if (outside) {
+        // Outside home ground: walk back to its centre and hold there,
+        // instead of chasing the player into town.
+        const back = angleTo(thug.x, thug.y, L.cx, L.cy);
+        thug.angle = back;
+        mx = Math.cos(back) * thug.speed;
+        my = Math.sin(back) * thug.speed;
       }
     }
+    if (mx === 0 && my === 0) {
+      thug.angle = angleTo(thug.x, thug.y, target.x, target.y);
+      if (d > 46) {
+        // Close in — and charge the last stretch, so a thug does not just
+        // shuffle up to the player at one flat speed.
+        const charging = d < 140;
+        const speed = charging ? thug.speed * 1.35 : thug.speed;
+        mx = Math.cos(thug.angle) * speed;
+        my = Math.sin(thug.angle) * speed;
+      } else {
+        // Close in: swing at the player.
+        thug.shootCooldown -= dt;
+        if (thug.shootCooldown <= 0) {
+          thug.shootCooldown = 1.0;
+          if (p.car) damageCar(game, p.car, 12);
+          else damagePlayer(game, 9, 'a Tide King thug');
+        }
+      }
+    }
+    // Thugs walk the streets, not through walls or into the bay: slide
+    // along solid edges, so a fight on the pier or the beach stays there.
+    if (mx !== 0 || my !== 0) moveWithCollision(game.world, thug, mx * dt, my * dt, 12);
   }
   game.thugs = game.thugs.filter((t) => t.health > 0);
 }

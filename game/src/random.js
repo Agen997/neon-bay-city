@@ -63,6 +63,14 @@ export function distance(x1, y1, x2, y2) {
   return Math.hypot(x2 - x1, y2 - y1);
 }
 
+// A uniform point inside a disc of radius r around (cx, cy): for
+// scattering a crew over a patch of ground instead of fixed points.
+export function randomPointInCircle(rng, cx, cy, r) {
+  const a = rng.range(0, Math.PI * 2);
+  const d = Math.sqrt(rng.next()) * r;
+  return { x: cx + Math.cos(a) * d, y: cy + Math.sin(a) * d };
+}
+
 export function angleTo(x1, y1, x2, y2) {
   return Math.atan2(y2 - y1, x2 - x1);
 }

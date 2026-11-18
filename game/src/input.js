@@ -9,6 +9,9 @@ export function createInput(canvas) {
     mouseY: 0,
     mouseDown: false,
     mouseClicked: false,
+    // False until the mouse moves once: the player aims with the keys
+    // until then, instead of at the screen's top-left corner.
+    mouseMoved: false,
     // Movement vector from WASD / arrows, normalised.
     moveX: 0,
     moveY: 0,
@@ -42,6 +45,12 @@ export function createInput(canvas) {
     const rect = canvas.getBoundingClientRect();
     input.mouseX = event.clientX - rect.left;
     input.mouseY = event.clientY - rect.top;
+    input.mouseMoved = true;
+  });
+  // A right-click menu over the game breaks the flow for nothing: the
+  // game never uses the right button.
+  canvas.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
   });
   canvas.addEventListener('mousedown', (event) => {
     if (event.button === 0) {

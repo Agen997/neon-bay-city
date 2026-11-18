@@ -10,10 +10,16 @@ export function createSoundBank() {
     musicTimer: 0,
     engineTimer: 0,
     ensure() {
-      if (bank.ctx) return;
+      if (bank.ctx) {
+        // A context starts suspended until the browser allows sound; a
+        // start that never resumes it plays the whole game silent.
+        if (bank.ctx.state === 'suspended') bank.ctx.resume().catch(() => {});
+        return;
+      }
       try {
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         bank.ctx = new AudioContext();
+        if (bank.ctx.state === 'suspended') bank.ctx.resume().catch(() => {});
       } catch {
         bank.ctx = null;
       }
@@ -59,6 +65,11 @@ export function createSoundBank() {
     },
     busted() {
       [330, 262, 196].forEach((f, i) => setTimeout(() => bank.tone(f, 0.22, 'sawtooth', 0.08), i * 160));
+    },
+    // The King walks in: a low two-note menace when his crew spawns.
+    boss() {
+      bank.tone(110, 0.35, 'sawtooth', 0.1, 82);
+      setTimeout(() => bank.tone(82, 0.5, 'sawtooth', 0.1, 55), 320);
     },
     engine(running) {
       if (!running || bank.muted || !bank.ctx) return;

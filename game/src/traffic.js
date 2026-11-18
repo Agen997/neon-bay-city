@@ -3,7 +3,7 @@
 // is fired or a wanted chase rolls past them.
 import { CFG, PED_COLORS } from './config.js';
 import { distance, gauss } from './random.js';
-import { isOnRoad, isWater, nearestRoadCenter, randomStreetPoint } from './world.js';
+import { isOnRoad, isWater, nearestRoadCenter, randomStreetPoint, WATER_X } from './world.js';
 
 export function spawnPedestrian(game, x, y) {
   const rng = game.rng;
@@ -47,6 +47,11 @@ function pickSidewalkTarget(game, ped) {
     ped.targetX = along;
     ped.targetY = line + side;
   }
+  // Keep the target on dry land: a sidewalk point past the bay's edge
+  // would leave the pedestrian pressing against the water forever.
+  ped.targetX = Math.min(ped.targetX, WATER_X - 60);
+  ped.targetX = Math.max(120, ped.targetX);
+  ped.targetY = Math.min(Math.max(120, ped.targetY), 3080);
 }
 
 export function updatePedestrian(game, ped, dt) {

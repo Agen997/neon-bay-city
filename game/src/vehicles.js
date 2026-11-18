@@ -3,7 +3,7 @@
 // road and turn at junctions; the player's car answers W/A/S/D.
 import { CFG, CAR_COLORS } from './config.js';
 import { clamp, angleDelta, distance, shuffle } from './random.js';
-import { collidesSolid, nearestRoadCenter, roadCenters, isOnRoad } from './world.js';
+import { collidesSolid, nearestRoadCenter, roadCenters, isOnRoad, WATER_X } from './world.js';
 
 let carId = 0;
 
@@ -22,6 +22,8 @@ export function createCar(x, y, angle, color, kind) {
     wrecked: false,
     health: 100,
     sirenPhase: 0,
+    // A parked car stays parked: the traffic AI must not drive it off.
+    parked: false,
     // Traffic AI state: which road it follows and which way it drives.
     roadAxis: 'x',
     roadLine: y,
@@ -44,6 +46,9 @@ export function spawnParkedCars(game) {
     { x: spots.plaza.x - 90, y: spots.plaza.y - 60 },
     { x: spots.hideout.x, y: spots.hideout.y + 190 },
     { x: spots.diner.x, y: spots.diner.y + 80 },
+    // A ride parked on the beach road by the lighthouse, so the drive
+    // home after the King fight does not start with a long walk to town.
+    { x: 2752, y: 360 },
   ];
   // Deal the parked cars distinct colours from a shuffled deck, so the
   // street does not roll the same red twice in a row.
@@ -52,6 +57,10 @@ export function spawnParkedCars(game) {
     const a = anchors[i];
     const car = createCar(a.x, a.y, rng.range(0, Math.PI * 2), colors[i % colors.length], 'civilian');
     car.speed = 0;
+    // Parked means parked: without this flag the traffic AI accelerates
+    // every car that is not the player's to cruising speed, so the cars
+    // the missions ask the player to steal drive off on their own.
+    car.parked = true;
     game.cars.push(car);
   }
   // The player's starter car, already owned, on the road by Mara's garage.
@@ -67,7 +76,12 @@ export function spawnTrafficCar(game) {
   const centers = roadCenters();
   const vertical = rng.chance(0.5);
   const line = rng.pick(centers);
-  const along = rng.range(200, CFG.worldSize - 260);
+  // A horizontal road's east end runs past the water's edge: cap the
+  // along-road spawn there, so traffic never starts its run on the sand
+  // or in the bay.
+  const along = vertical
+    ? rng.range(200, CFG.worldSize - 260)
+    : rng.range(200, WATER_X - 80);
   const car = createCar(
     vertical ? line : along,
     vertical ? along : line,
@@ -91,7 +105,7 @@ function trafficTargetAngle(car) {
 
 // Traffic follows its road, slows for the car ahead, turns at junctions.
 export function updateTrafficCar(game, car, dt) {
-  if (car.owner === 'player' || car.kind === 'police') return;
+  if (car.owner === 'player' || car.kind === 'police' || car.parked) return;
   const target = trafficTargetAngle(car);
   car.angle += angleDelta(car.angle, target) * Math.min(1, dt * 3);
   // Keep the car centred on its road line.

@@ -13,7 +13,7 @@
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { cpSync, existsSync, mkdirSync, writeFileSync, readdirSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, writeFileSync, readdirSync, statSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -43,8 +43,9 @@ for (const shot of shots) {
 // scorer would refuse (more than 4 screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB of game
 // files, in all, or a path under game/ over 1000 bytes: game/ counts beside /output's own 1000-entry cap, its
 // screenshots/ and dossier.json).
+const dossierPath = join(out, 'dossier.json');
 writeFileSync(
-  join(out, 'dossier.json'),
+  dossierPath,
   buildDossier(out, {
     text_max_bytes: 163840,
     screenshots: { max: 4, max_bytes: 262144 },
@@ -53,3 +54,20 @@ writeFileSync(
     game_path_max_bytes: 1000,
   }),
 );
+
+// Say what went in, so a bad hand-in is visible here instead of at
+// intake: the game file count, each screenshot's size, and the dossier
+// text the judge reads against its 163,840-byte cap.
+function countFiles(dir) {
+  let n = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    n += entry.isDirectory() ? countFiles(join(dir, entry.name)) : 1;
+  }
+  return n;
+}
+const dossier = JSON.parse(readFileSync(dossierPath, 'utf8'));
+const dossierText = typeof dossier.text === 'string' ? dossier.text.length : 0;
+console.log(`Neon Bay handed in: ${countFiles(join(out, 'game'))} game files, dossier ${dossierText} / 163840 text bytes`);
+for (const shot of shots) {
+  console.log(`  screenshots/${shot}: ${statSync(join(shotsDir, shot)).size} bytes`);
+}
