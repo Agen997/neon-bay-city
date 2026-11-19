@@ -3,19 +3,109 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Neon Bay — an open-world crime game</title>
+<title>Neon Bay — 3D open-world crime game</title>
 <style>
-  html, body { margin: 0; padding: 0; background: #0a0c18; height: 100%; }
-  body { display: flex; align-items: center; justify-content: center; }
-  #wrap { width: 1280px; max-width: 100vw; }
-  canvas { display: block; width: 100%; height: auto; background: #1d6f8e; }
-  #hint { color: #8a93a8; font: 13px sans-serif; text-align: center; padding: 8px 0 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #171222; font-family: 'Segoe UI', system-ui, sans-serif; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; z-index: 5; }
+  .panel { background: rgba(12, 8, 20, 0.62); border: 1px solid rgba(255, 210, 77, 0.35); border-radius: 8px; padding: 8px 12px; }
+  #topleft { position: absolute; top: 12px; left: 12px; display: flex; flex-direction: column; gap: 6px; min-width: 240px; }
+  #hpbar { height: 14px; background: rgba(255,255,255,0.18); border-radius: 7px; overflow: hidden; }
+  #hp-fill { height: 100%; width: 100%; background: #3ae06a; transition: width 0.15s; }
+  #hp-text { font-size: 12px; opacity: 0.9; }
+  #cash { font-size: 22px; font-weight: 700; color: #3ae06a; }
+  #stars { font-size: 20px; letter-spacing: 2px; color: #ffd24d; text-shadow: 0 0 8px rgba(255,210,77,0.6); }
+  #weapon, #radio { font-size: 13px; opacity: 0.9; }
+  #carhp { display: none; height: 10px; background: rgba(255,255,255,0.18); border-radius: 5px; overflow: hidden; }
+  #carhp-fill { height: 100%; width: 100%; background: #4aa8ff; }
+  #topcenter { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); text-align: center; max-width: 46vw; }
+  #objective { font-size: 16px; font-weight: 600; text-shadow: 0 1px 4px #000; }
+  #pips { margin-top: 6px; display: flex; gap: 6px; justify-content: center; }
+  .pip { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #ffd24d; background: transparent; }
+  .pip.done { background: #ffd24d; }
+  .pip.current { background: #ff2e88; border-color: #ff2e88; box-shadow: 0 0 10px #ff2e88; }
+  #topright { position: absolute; top: 12px; right: 12px; text-align: right; }
+  #clock { font-size: 20px; font-weight: 700; }
+  #hint { font-size: 11px; opacity: 0.75; margin-top: 4px; max-width: 220px; }
+  #boss { display: none; position: absolute; top: 86px; left: 50%; transform: translateX(-50%); width: 420px; text-align: center; }
+  #boss-name { font-size: 14px; font-weight: 700; color: #ffd24d; letter-spacing: 2px; text-shadow: 0 0 8px #000; }
+  #bossbar { height: 12px; background: rgba(255,255,255,0.18); border-radius: 6px; overflow: hidden; margin-top: 4px; border: 1px solid #d8a020; }
+  #boss-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #d8a020, #ff4040); }
+  #minimap { position: absolute; right: 12px; bottom: 12px; width: 180px; height: 180px; border: 2px solid rgba(255,210,77,0.5); border-radius: 8px; background: #171222; }
+  #crosshair { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; transform: translate(-50%, -50%); }
+  #crosshair::before, #crosshair::after { content: ''; position: absolute; background: rgba(255,255,255,0.9); box-shadow: 0 0 4px #000; }
+  #crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
+  #crosshair::after { left: 0; top: 6px; width: 14px; height: 2px; }
+  #vignette { position: fixed; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, transparent 55%, rgba(255,0,0,0.55) 100%); }
+  #toast { position: absolute; bottom: 210px; left: 50%; transform: translateX(-50%); font-size: 18px; font-weight: 600; color: #ffd24d; text-shadow: 0 2px 6px #000; opacity: 0; transition: opacity 0.3s; text-align: center; }
+  .menu { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; background: rgba(10, 6, 18, 0.72); z-index: 10; color: #fff; text-align: center; pointer-events: auto; }
+  .menu h1 { font-size: 56px; letter-spacing: 6px; color: #ff2e88; text-shadow: 0 0 24px #ff2e88, 0 0 60px #ff7e3c; }
+  .menu h2 { font-size: 42px; letter-spacing: 4px; }
+  .menu p { margin: 12px 0; font-size: 16px; opacity: 0.9; max-width: 560px; line-height: 1.5; }
+  .menu button { pointer-events: auto; cursor: pointer; margin: 6px; padding: 12px 28px; font-size: 17px; font-weight: 700; color: #171222; background: #ffd24d; border: none; border-radius: 8px; }
+  .menu button:hover { background: #ffe14d; }
+  .menu .sub { font-size: 13px; opacity: 0.7; margin-top: 14px; line-height: 1.7; }
+  #won h2 { color: #3ae06a; text-shadow: 0 0 24px #3ae06a; }
+  #busted h2 { color: #ff4040; text-shadow: 0 0 24px #ff4040; }
 </style>
 </head>
 <body>
-<div id="wrap">
-  <canvas id="game" width="1280" height="720"></canvas>
-  <div id="hint">Neon Bay — WASD move / drive · mouse aim · click shoot · Space melee · E enter or steal a car · Shift run · P pause · M mute</div>
+<canvas id="game"></canvas>
+<div id="vignette"></div>
+<div id="hud">
+  <div id="topleft">
+    <div class="panel">
+      <div id="hpbar"><div id="hp-fill"></div></div>
+      <div id="hp-text">100 HP</div>
+      <div id="cash">$0</div>
+      <div id="stars">☆☆☆☆☆</div>
+      <div id="weapon">1 · Pistol ∞</div>
+      <div id="radio">♪ radio off (R)</div>
+      <div id="carhp"><div id="carhp-fill"></div></div>
+    </div>
+  </div>
+  <div id="topcenter">
+    <div class="panel">
+      <div id="objective">Steal a car</div>
+      <div id="pips"><span class="pip"></span><span class="pip"></span><span class="pip"></span><span class="pip"></span><span class="pip"></span></div>
+    </div>
+  </div>
+  <div id="topright">
+    <div class="panel">
+      <div id="clock">18:24</div>
+      <div id="hint">WASD move/drive · mouse aim · click shoot · Space melee · E enter/exit car · 1/2/3 weapons · R radio · M mute · P pause</div>
+    </div>
+  </div>
+  <div id="boss"><div id="boss-name">★ TIDE KING ★</div><div id="bossbar"><div id="boss-fill"></div></div></div>
+  <canvas id="minimap" width="180" height="180"></canvas>
+  <div id="crosshair"></div>
+  <div id="toast"></div>
+</div>
+<div class="menu" id="title">
+  <h1>NEON BAY</h1>
+  <p>Golden hour over the bay. Rex Marlowe is new in town, and fixer Mara Voss has five jobs for him — if the NBPD and the Tide Kings let him live long enough to finish them.</p>
+  <div>
+    <button id="btn-continue">Continue</button>
+    <button id="btn-new">New Game</button>
+  </div>
+  <p id="title-note" class="sub"></p>
+  <p class="sub">WASD move / drive · mouse orbit (right-drag) &amp; aim · click shoot · Space melee<br>E enter / steal car · 1/2/3 weapons · R radio · M mute · P pause (autosave)</p>
+</div>
+<div class="menu" id="pause">
+  <h2>PAUSED</h2>
+  <p>Progress saved. The city waits.</p>
+  <div><button id="btn-resume">Resume</button><button id="btn-quit">Quit to Title</button></div>
+</div>
+<div class="menu" id="busted">
+  <h2>BUSTED</h2>
+  <p id="busted-info"></p>
+  <p class="sub">Press Enter to get out and try again.</p>
+</div>
+<div class="menu" id="won">
+  <h2>NEON BAY CLEARED</h2>
+  <p id="won-info"></p>
+  <p class="sub">Press Enter for the title screen.</p>
 </div>
 <script type="module" src="./src/main.js"></script>
 </body>

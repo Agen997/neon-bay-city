@@ -1,8 +1,7 @@
-// Neon Bay — the seeded random source. The city, the traffic and the
-// screenshot scenes all draw from this, so the same seed builds the same town.
+// Neon Bay 3D — deterministic seeded random source (mulberry32).
 export function mulberry32(seed) {
   let a = seed >>> 0;
-  return function next() {
+  return function () {
     a |= 0;
     a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
@@ -11,38 +10,13 @@ export function mulberry32(seed) {
   };
 }
 
-export class RNG {
-  constructor(seed) {
-    this.next = mulberry32(seed);
-  }
-  // Float in [0, 1).
-  f() {
-    return this.next();
-  }
-  // Float in [a, b).
-  range(a, b) {
-    return a + (b - a) * this.next();
-  }
-  // Integer in [a, b] inclusive.
-  int(a, b) {
-    return a + Math.floor(this.next() * (b - a + 1));
-  }
-  // One element of an array.
-  pick(arr) {
-    return arr[Math.floor(this.next() * arr.length)];
-  }
-  // True with probability p.
-  chance(p) {
-    return this.next() < p;
-  }
-  // Shuffle a copy of an array in place and return it.
-  shuffle(arr) {
-    for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(this.next() * (i + 1));
-      const t = arr[i];
-      arr[i] = arr[j];
-      arr[j] = t;
-    }
-    return arr;
-  }
+export function makeRng(seed) {
+  const next = mulberry32(seed);
+  return {
+    next,
+    range: (a, b) => a + next() * (b - a),
+    int: (a, b) => a + Math.floor(next() * (b - a + 1)),
+    pick: (arr) => arr[Math.floor(next() * arr.length)],
+    chance: (p) => next() < p,
+  };
 }

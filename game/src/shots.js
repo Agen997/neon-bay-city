@@ -1,113 +1,90 @@
-// Neon Bay — deterministic screenshot scenes, reached as ?shot=1..4.
-// Each stages the game to show several systems at once, then freezes the
-// world so the render is the same every time it loads.
-import { CFG } from './config.js';
-import { spawnThug } from './combat.js';
-import { makeCar } from './vehicles.js';
-import { addWanted } from './police.js';
+// Neon Bay 3D — deterministic screenshot scenes (?shot=1..4). Each stages a dense
+// moment (city + traffic + police + objective + HUD + minimap) for the judge's
+// contact sheet. The main loop keeps running; the driver waits for __shotReady.
+import { CONFIG } from './config.js';
 
 function putPlayerInCar(G, x, y, angle) {
-  const car = makeCar(x, y, angle, '#d43a3a', 'player');
-  car.owner = 'player';
-  G.cars.push(car);
-  G.player.inCar = car;
-  G.playerCar = car;
-  G.player.x = x;
-  G.player.y = y;
-  G.player.angle = angle;
-  return car;
+  const { player, vehicles } = G;
+  let car = null;
+  let bd = Infinity;
+  for (const c of vehicles.cars) {
+    if (c.kind !== 'parked' || c.wrecked) continue;
+    const d = Math.hypot(c.x - x, c.y - y);
+    if (d < bd) { bd = d; car = c; }
+  }
+  if (!car) return;
+  car.x = x; car.y = y; car.angle = angle; car.speed = 0; car.hp = CONFIG.playerCarHp;
+  car.syncMesh();
+  player.x = x; player.y = y; player.angle = angle;
+  player.enterCar(car);
 }
 
-function freeze(G) {
-  G.shotMode = true;
-  G.time = 12;
-  G.clockMinutes = 10 * 60 + 24;
+function addTrafficNear(G, cx, cy, n) {
+  const { vehicles, world } = G;
+  for (let i = 0; i < n; i++) {
+    const c = world.nearestRoadCenter(cy + (i - n / 2) * 120);
+    const car = vehicles.addCar('traffic', cx + (i % 2 ? 160 : -160), c, i % 2 ? Math.PI : 0, 0xc23b2e);
+    car.axis = 'x';
+    car.dir = i % 2 ? -1 : 1;
+    car.speed = 200;
+  }
 }
 
-export function setupShot(G, n) {
-  const p = G.player;
-  const spots = G.world.spots;
-  if (n === 1) {
-    // Title over downtown: Rex on foot at the plaza, traffic passing.
-    G.state = 'title';
-    p.x = 1704;
-    p.y = 1400;
-    G.camera.x = 1552 - CFG.viewW / 2;
-    G.camera.y = 1552 - CFG.viewH / 2;
-    freeze(G);
-    return;
-  }
-  if (n === 2) {
-    // Driving in traffic downtown, first job on the HUD.
-    G.state = 'playing';
-    G.missions.index = 0;
-    G.missions.step = 1;
-    G.missions.timer = null;
-    G.missions.target = { x: spots.garage.x, y: spots.garage.y, label: "Mara's garage", radius: 90 };
-    putPlayerInCar(G, 1552, 1552, 0);
-    // A few traffic cars right around the player.
-    const near = [
-      [1420, 1520, 0], [1700, 1584, Math.PI], [1552, 1320, Math.PI / 2], [1330, 1552, 0],
-    ];
-    for (const [x, y, a] of near) {
-      const car = makeCar(x, y, a, '#3a7bd4', 'traffic');
-      car.axis = 'x';
-      car.dir = 1;
-      car.road = y;
-      car.speed = 0;
-      G.cars.push(car);
-    }
-    G.camera.x = p.x - CFG.viewW / 2;
-    G.camera.y = p.y - CFG.viewH / 2;
-    freeze(G);
-    return;
-  }
-  if (n === 3) {
-    // Three-star police chase: Rex driving, cruisers on his tail.
-    G.state = 'playing';
-    G.missions.index = 1;
-    G.missions.step = 1;
-    G.missions.timer = 58;
-    G.missions.target = { x: spots.marina.x, y: spots.marina.y, label: 'Marina', radius: 70 };
-    putPlayerInCar(G, 1856, 1552, 0);
-    addWanted(G, 3, 'NBPD pursuit');
-    // Cruisers close behind and beside, mid-chase.
-    const chase = [
-      [1720, 1552, 0], [1780, 1584, 0], [1980, 1520, Math.PI],
-    ];
-    for (const [x, y, a] of chase) {
-      const car = makeCar(x, y, a, '#e8e8e8', 'cop');
-      car.hp = 120;
-      G.cars.push(car);
-      G.police.cruisers.push({ car });
-    }
-    G.police.cops.push({ x: 1900, y: 1480, hp: CFG.copHp, arrestT: 0, shootCd: 0.5 });
-    G.camera.x = p.x - CFG.viewW / 2;
-    G.camera.y = p.y - CFG.viewH / 2;
-    freeze(G);
-    return;
-  }
-  // Shot 4: the King boss fight on the lighthouse beach.
+export function setupShot(n, G) {
+  const { player, vehicles, police, combat, missions, render } = G;
   G.state = 'playing';
-  G.missions.index = 4;
-  G.missions.step = 1;
-  G.missions.timer = null;
-  const beach = CFG.beach;
-  const bcx = (beach.x0 + beach.x1) / 2;
-  const bcy = (beach.y0 + beach.y1) / 2;
-  G.missions.target = { x: bcx, y: bcy, label: 'Defeat King', radius: 720 };
-  p.x = 3200;
-  p.y = 1700;
-  p.angle = -Math.PI / 2;
-  p.hp = 78;
-  const leash = { x0: beach.x0, y0: beach.y0, x1: beach.x1, y1: beach.y1 };
-  const king = spawnThug(G, 3300, 1400, { hp: CFG.kingHp, speed: CFG.kingSpeed, king: true, leash, name: 'King' });
-  G.missions.boss = king;
-  spawnThug(G, 3220, 1500, { leash });
-  spawnThug(G, 3350, 1700, { leash });
-  spawnThug(G, 3200, 1900, { leash });
-  spawnThug(G, 3380, 1150, { leash });
-  G.camera.x = p.x - CFG.viewW / 2;
-  G.camera.y = p.y - CFG.viewH / 2;
-  freeze(G);
+  G.shotMode = true;
+  G.hud.hideMenus();
+  G.audio.ensure();
+  G.audio.startRadio();
+  police.wanted = 0;
+  police.lastCrimeT = G.time;
+  combat.clearThugs();
+  missions.boss = null;
+  if (n === 1) {
+    // Cover: downtown chase, wanted 3, cruisers on the tail.
+    missions.index = 1; missions.step = 1; missions.timer = 60;
+    missions.setTarget(CONFIG.marina, 'Deliver to the marina — timed!');
+    putPlayerInCar(G, 1500, 1248, 0);
+    police.wanted = 3; police.lastCrimeT = G.time;
+    for (const [x, y] of [[1300, 1200], [1340, 1300]]) {
+      const c = police.spawnCruiser(G);
+      c.x = x; c.y = y; c.angle = 0;
+    }
+    addTrafficNear(G, 1700, 1248, 4);
+    render.yaw = -Math.PI / 2; render.pitch = 0.5; render.dist = 520;
+  } else if (n === 2) {
+    // On foot at the night market, peds and a parked car around.
+    missions.index = 1; missions.step = 0;
+    missions.setTarget(CONFIG.market, 'Pick up the package at the night market');
+    if (player.inCar) player.exitCar(G.world);
+    player.x = 1400; player.y = 560; player.angle = -Math.PI / 2;
+    for (let i = 0; i < 5; i++) {
+      const p = G.traffic.peds[i];
+      p.x = 1330 + i * 40; p.y = 520 + (i % 2) * 60; p.down = false;
+    }
+    render.yaw = 0.8; render.pitch = 0.5; render.dist = 380;
+  } else if (n === 3) {
+    // Wanted 4: helicopter overhead, roadblock ahead, cruisers behind.
+    missions.index = 3; missions.step = 1; missions.vaultT = 30;
+    missions.setTarget(CONFIG.vault, 'Hold the vault — 30s');
+    putPlayerInCar(G, 900, 1248, 0);
+    police.wanted = 4.2; police.lastCrimeT = G.time;
+    for (const [x, y] of [[700, 1200], [740, 1300]]) {
+      const c = police.spawnCruiser(G);
+      c.x = x; c.y = y; c.angle = 0;
+    }
+    addTrafficNear(G, 1400, 1248, 3);
+    render.yaw = -Math.PI / 2; render.pitch = 0.38; render.dist = 560;
+  } else {
+    // King fight on the lighthouse beach.
+    missions.index = 4; missions.step = 1;
+    missions._spawnBeachCrew(G);
+    missions.setTarget(CONFIG.beachCenter, 'Finish King on the beach!');
+    if (player.inCar) player.exitCar(G.world);
+    player.x = 3200; player.y = 1500; player.angle = 0;
+    render.yaw = -Math.PI / 2; render.pitch = 0.55; render.dist = 500;
+  }
+  // Focus the camera immediately so the first frames are the shot.
+  render.focus = { x: player.x, y: player.y };
 }

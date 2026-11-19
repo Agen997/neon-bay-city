@@ -1,206 +1,247 @@
-// Neon Bay — pistol, melee and thugs. Rex aims with the mouse, swings with
-// Space, and the Tide King crew charges the last stretch on foot. A downed
-// thug sometimes leaves a health pack behind.
-import { CFG, PALETTE } from './config.js';
-import { moveCircle } from './world.js';
-import { hurtPlayer } from './player.js';
+// Neon Bay 3D — combat: hitscan shooting with tracers, melee, three weapons
+// (pistol / SMG / shotgun, keys 1-2-3), Tide King thugs and health packs.
+import * as THREE from '../vendor/three.min.js';
+import { CONFIG } from './config.js';
 
-export function createCombat() {
-  return {
-    bullets: [], // {x,y,vx,vy,dmg,owner,life}
-    thugs: [], // {x,y,hp,speed,hitCd,king,leash}
-    packs: [], // {x,y,kind}
-    swingT: 0, // melee swing animation timer
-    swingAngle: 0,
-  };
+const WEAPONS = [
+  { name: 'Pistol', dmg: 34, rate: 0.28, spread: 0.012, pellets: 1, ammo: Infinity, auto: false },
+  { name: 'SMG', dmg: 16, rate: 0.09, spread: 0.05, pellets: 1, ammo: 240, auto: true },
+  { name: 'Shotgun', dmg: 11, rate: 0.85, spread: 0.15, pellets: 6, ammo: 40, auto: false },
+];
+
+function makeThugMesh(king) {
+  const g = new THREE.Group();
+  const torso = new THREE.Mesh(
+    new THREE.BoxGeometry(king ? 22 : 16, king ? 20 : 16, 11),
+    new THREE.MeshStandardMaterial({ color: king ? CONFIG.colors.king : CONFIG.colors.thug, roughness: 0.8 })
+  );
+  torso.position.y = king ? 24 : 21;
+  torso.castShadow = true;
+  const head = new THREE.Mesh(
+    new THREE.BoxGeometry(king ? 13 : 10, king ? 12 : 10, 10),
+    new THREE.MeshStandardMaterial({ color: 0xc89878, roughness: 0.8 })
+  );
+  head.position.y = king ? 40 : 34;
+  const legs = new THREE.Mesh(
+    new THREE.BoxGeometry(13, 13, 8),
+    new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.9 })
+  );
+  legs.position.y = 6.5;
+  g.add(torso, head, legs);
+  return g;
 }
 
-export function fireBullet(G, x, y, angle, speed, dmg, owner) {
-  G.combat.bullets.push({
-    x, y,
-    vx: Math.cos(angle) * speed,
-    vy: Math.sin(angle) * speed,
-    dmg, owner,
-    life: 1.6,
-  });
-}
-
-function pointInBuilding(world, x, y) {
-  for (const b of world.buildings) {
-    if (x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h) return true;
+export class CombatSys {
+  constructor(scene, world, rng) {
+    this.scene = scene;
+    this.world = world;
+    this.rng = rng;
+    this.thugs = [];
+    this.tracers = [];
+    this.healthPacks = [];
+    this.weapons = WEAPONS.map((w) => ({ ...w }));
+    this.wi = 0;
+    this.cooldown = 0;
+    this.meleeCooldown = 0;
+    this._tracerGeo = new THREE.BufferGeometry();
+    this._tracerMat = new THREE.LineBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.9 });
   }
-  return false;
-}
 
-export function spawnThug(G, x, y, opts = {}) {
-  const thug = {
-    x, y,
-    hp: opts.hp || CFG.thugHp,
-    speed: opts.speed || CFG.thugSpeed,
-    hitCd: 0,
-    king: !!opts.king,
-    leash: opts.leash || null, // {x0,y0,x1,y1} the thug never leaves
-    name: opts.name || 'Thug',
-  };
-  G.combat.thugs.push(thug);
-  return thug;
-}
+  weapon() { return this.weapons[this.wi]; }
 
-function damageThug(G, thug, dmg) {
-  thug.hp -= dmg;
-  G.audio.hit();
-  if (thug.hp > 0) return;
-  const i = G.combat.thugs.indexOf(thug);
-  if (i >= 0) G.combat.thugs.splice(i, 1);
-  if (G.rng.chance(0.35)) {
-    G.combat.packs.push({ x: thug.x, y: thug.y, kind: 'health' });
+  switchWeapon(i) {
+    if (i >= 0 && i < this.weapons.length) this.wi = i;
   }
-  G.missions.onEvent(G, 'thugDown', thug);
-  if (thug.king) G.missions.onEvent(G, 'kingDown', thug);
-}
 
-export function updateCombat(G, dt) {
-  const c = G.combat;
-  const p = G.player;
-  if (c.swingT > 0) c.swingT -= dt;
-  // Pistol: hold the mouse button, aim with the pointer.
-  if (G.state === 'playing' && !p.inCar && G.input.mouseDown && p.shootCd <= 0) {
-    const cam = G.camera;
-    const mx = cam.x + G.input.mouseX;
-    const my = cam.y + G.input.mouseY;
-    const a = Math.atan2(my - p.y, mx - p.x);
-    fireBullet(G, p.x + Math.cos(a) * 20, p.y + Math.sin(a) * 20, a, 780, CFG.pistolDamage, 'player');
-    p.shootCd = CFG.pistolCooldown;
-    p.angle = a;
-    G.audio.shoot();
-    G.traffic.scarePeds(G, p.x, p.y, 260);
+  spawnThug(x, y, king = false) {
+    const mesh = makeThugMesh(king);
+    mesh.position.set(x, 0, y);
+    this.scene.add(mesh);
+    const t = { x, y, angle: 0, hp: king ? 280 : 50, king, mesh, attackT: 0.5, speed: king ? 120 : 72, wakeT: 2.2 };
+    this.thugs.push(t);
+    return t;
   }
-  // Melee: Space swings an arc in front of Rex.
-  if (G.state === 'playing' && !p.inCar && G.input.down(' ') && p.meleeCd <= 0) {
-    p.meleeCd = CFG.meleeCooldown;
-    c.swingT = 0.22;
-    c.swingAngle = p.angle;
+
+  clearThugs() {
+    for (const t of this.thugs) this.scene.remove(t.mesh);
+    this.thugs.length = 0;
+  }
+
+  spawnHealthPack(x, y) {
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(14, 8, 14),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5, emissive: 0x2aff5a, emissiveIntensity: 0.5 })
+    );
+    const cross = new THREE.Mesh(
+      new THREE.BoxGeometry(10, 2, 3),
+      new THREE.MeshStandardMaterial({ color: 0x2aff5a, emissive: 0x2aff5a, emissiveIntensity: 0.8 })
+    );
+    cross.position.y = 5;
+    const pack = new THREE.Group();
+    pack.add(m, cross);
+    pack.position.set(x, 4, y);
+    this.scene.add(pack);
+    this.healthPacks.push({ x, y, mesh: pack });
+  }
+
+  _tracer(from, to) {
+    const geo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(from.x, 2.5, from.y),
+      new THREE.Vector3(to.x, 2.5, to.y),
+    ]);
+    const line = new THREE.Line(geo, this._tracerMat.clone());
+    this.scene.add(line);
+    this.tracers.push({ line, life: 0.09 });
+  }
+
+  // Hitscan shot from the player toward ground point (tx, ty).
+  shoot(G, tx, ty) {
+    const player = G.player;
+    if (this.cooldown > 0 || player.inCar) return;
+    const w = this.weapon();
+    if (w.ammo !== Infinity && w.ammo <= 0) {
+      this.switchWeapon(0); // fall back to the pistol
+      return;
+    }
+    this.cooldown = w.rate;
+    if (w.ammo !== Infinity) w.ammo--;
+    const baseA = Math.atan2(ty - player.y, tx - player.x);
+    let hitAny = false;
+    for (let p = 0; p < w.pellets; p++) {
+      const a = baseA + (this.rng.next() - 0.5) * 2 * w.spread;
+      const dx = Math.cos(a), dy = Math.sin(a);
+      let best = null, bestD = 520;
+      const targets = [];
+      for (const t of this.thugs) targets.push({ x: t.x, y: t.y, r: t.king ? 24 : 18, ref: t, kind: 'thug' });
+      for (const c of G.police.cops) targets.push({ x: c.x, y: c.y, r: 16, ref: c, kind: 'cop' });
+      for (const tg of targets) {
+        const rx = tg.x - player.x, ry = tg.y - player.y;
+        const along = rx * dx + ry * dy;
+        if (along < 0 || along > bestD) continue;
+        const perp = Math.abs(rx * dy - ry * dx);
+        if (perp < tg.r + 16) { best = tg; bestD = along; }
+      }
+      const endX = player.x + dx * (best ? bestD : 480);
+      const endY = player.y + dy * (best ? bestD : 480);
+      this._tracer(player, { x: endX, y: endY });
+      if (best) {
+        hitAny = true;
+        best.ref.hp -= w.dmg;
+        if (best.kind === 'cop') G.police.addWanted(1, G);
+        G.audio.hit();
+        if (best.ref.hp <= 0) this._kill(best.ref, best.kind, G);
+      }
+    }
+    G.lastShot = { x: player.x, y: player.y, t: G.time };
+    if (w.name === 'Shotgun') G.audio.shotgun();
+    else if (w.name === 'SMG') G.audio.smgShoot();
+    else G.audio.shoot();
+    if (hitAny) G.audio.hit();
+  }
+
+  _kill(ref, kind, G) {
+    if (kind === 'thug') {
+      const i = this.thugs.indexOf(ref);
+      if (i >= 0) this.thugs.splice(i, 1);
+      this.scene.remove(ref.mesh);
+      if (!ref.king && this.rng.chance(0.35)) this.spawnHealthPack(ref.x, ref.y);
+    } else {
+      const i = G.police.cops.indexOf(ref);
+      if (i >= 0) G.police.cops.splice(i, 1);
+      this.scene.remove(ref.mesh);
+    }
+  }
+
+  melee(G) {
+    const player = G.player;
+    if (this.meleeCooldown > 0 || player.inCar) return;
+    this.meleeCooldown = 0.45;
     G.audio.melee();
-    const hit = (t) => {
-      const d = Math.hypot(t.x - p.x, t.y - p.y);
-      if (d > CFG.meleeRange) return;
-      let diff = Math.atan2(t.y - p.y, t.x - p.x) - p.angle;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      if (Math.abs(diff) < CFG.meleeArc) damageThug(G, t, CFG.meleeDamage);
-    };
-    for (const t of [...c.thugs]) hit(t);
-    for (const cop of [...G.police.cops]) {
-      const d = Math.hypot(cop.x - p.x, cop.y - p.y);
-      if (d > CFG.meleeRange) continue;
-      let diff = Math.atan2(cop.y - p.y, cop.x - p.x) - p.angle;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      if (Math.abs(diff) < CFG.meleeArc) {
-        cop.hp -= CFG.meleeDamage;
-        if (cop.hp <= 0) G.police.addWanted(G, 1, 'officer down');
-      }
-    }
-    G.traffic.scarePeds(G, p.x, p.y, 200);
-  }
-  // Bullets fly, stop at buildings, and hit what they meet.
-  for (const b of [...c.bullets]) {
-    b.x += b.vx * dt;
-    b.y += b.vy * dt;
-    b.life -= dt;
-    let dead = b.life <= 0 || pointInBuilding(G.world, b.x, b.y);
-    if (!dead) {
-      if (b.owner === 'player') {
-        for (const t of [...c.thugs]) {
-          if (Math.hypot(t.x - b.x, t.y - b.y) < 16) {
-            damageThug(G, t, b.dmg);
-            dead = true;
-            break;
-          }
-        }
-        if (!dead) {
-          for (const cop of [...G.police.cops]) {
-            if (Math.hypot(cop.x - b.x, cop.y - b.y) < 14) {
-              cop.hp -= b.dmg;
-              if (cop.hp <= 0) G.police.addWanted(G, 1, 'officer down');
-              dead = true;
-              break;
-            }
-          }
-        }
-        if (!dead) {
-          for (const car of G.cars) {
-            if (car === p.inCar || car.wrecked) continue;
-            if (Math.hypot(car.x - b.x, car.y - b.y) < 20) {
-              G.vehicles.damageCar(G, car, b.dmg);
-              dead = true;
-              break;
-            }
-          }
-        }
-      } else if (b.owner === 'cop') {
-        // Cops shoot at the car, never at Rex himself.
-        if (p.inCar && Math.hypot(p.inCar.x - b.x, p.inCar.y - b.y) < 22) {
-          G.vehicles.damageCar(G, p.inCar, b.dmg);
-          dead = true;
+    const px = player.x, py = player.y, pa = player.angle;
+    for (const t of [...this.thugs]) {
+      const dx = t.x - px, dy = t.y - py;
+      const d = Math.hypot(dx, dy);
+      if (d < 58) {
+        let diff = Math.atan2(dy, dx) - pa;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        if (Math.abs(diff) < 1.2) {
+          t.hp -= 30;
+          t.x += Math.cos(pa) * 26;
+          t.y += Math.sin(pa) * 26;
+          G.audio.hit();
+          if (t.hp <= 0) this._kill(t, 'thug', G);
         }
       }
     }
-    if (dead) {
-      const i = c.bullets.indexOf(b);
-      if (i >= 0) c.bullets.splice(i, 1);
-    }
-  }
-  // Thugs charge the last stretch and swing when they reach Rex. Only the
-  // two closest thugs swing at once, so a whole crew cannot stun-lock him.
-  for (const t of [...c.thugs]) {
-    if (t.hitCd > 0) t.hitCd -= dt;
-    if (t.stuckT === undefined) { t.stuckT = 0; t.slideT = 0; t.slideDir = 1; t.lastD = Infinity; }
-    const dx = p.x - t.x;
-    const dy = p.y - t.y;
-    const d = Math.hypot(dx, dy) || 1;
-    if (d > 26) {
-      let mx = (dx / d) * t.speed * dt;
-      let my = (dy / d) * t.speed * dt;
-      if (d < t.lastD - 2) { t.lastD = d; t.stuckT = 0; }
-      else t.stuckT += dt;
-      if (t.stuckT > 1.2 && t.slideT <= 0) {
-        t.slideT = 1.0;
-        t.slideDir = G.rng.chance(0.5) ? 1 : -1;
-        t.stuckT = 0;
-      }
-      if (t.slideT > 0) {
-        t.slideT -= dt;
-        const px = -dy / d * t.slideDir;
-        const py = dx / d * t.slideDir;
-        mx = px * t.speed * dt;
-        my = py * t.speed * dt;
-      }
-      let nx = t.x + mx;
-      let ny = t.y + my;
-      // The King crew is leashed to the lighthouse sand.
-      if (t.leash) {
-        nx = Math.max(t.leash.x0 + 10, Math.min(t.leash.x1 - 10, nx));
-        ny = Math.max(t.leash.y0 + 10, Math.min(t.leash.y1 - 10, ny));
-      }
-      const moved = moveCircle(G.world, t.x, t.y, nx - t.x, ny - t.y, 13);
-      t.x = moved.x;
-      t.y = moved.y;
-    } else if (t.hitCd <= 0 && !p.inCar) {
-      const closer = c.thugs.filter((o) => o !== t && Math.hypot(o.x - p.x, o.y - p.y) < d + 4).length;
-      if (closer < 2) {
-        t.hitCd = 1.4;
-        hurtPlayer(G, t.king ? 14 : CFG.thugDamage);
+    for (const c of [...G.police.cops]) {
+      const d = Math.hypot(c.x - px, c.y - py);
+      if (d < 58) {
+        c.hp -= 30;
+        if (c.hp <= 0) this._kill(c, 'cop', G);
+        else G.police.addWanted(0.5, G);
       }
     }
   }
-  // Health packs.
-  for (const pack of [...c.packs]) {
-    if (Math.hypot(pack.x - p.x, pack.y - p.y) < 26 && !p.inCar) {
-      p.hp = Math.min(CFG.playerHp, p.hp + 30);
-      G.audio.pickup();
-      const i = c.packs.indexOf(pack);
-      if (i >= 0) c.packs.splice(i, 1);
+
+  update(dt, G) {
+    this.cooldown = Math.max(0, this.cooldown - dt);
+    this.meleeCooldown = Math.max(0, this.meleeCooldown - dt);
+    // Tracers fade fast.
+    for (let i = this.tracers.length - 1; i >= 0; i--) {
+      const t = this.tracers[i];
+      t.life -= dt;
+      t.line.material.opacity = Math.max(0, t.life / 0.09) * 0.9;
+      if (t.life <= 0) {
+        this.scene.remove(t.line);
+        t.line.geometry.dispose();
+        this.tracers.splice(i, 1);
+      }
+    }
+    // Health pack pickups.
+    const player = G.player;
+    for (let i = this.healthPacks.length - 1; i >= 0; i--) {
+      const p = this.healthPacks[i];
+      p.mesh.rotation.y += dt * 2;
+      if (Math.hypot(p.x - player.x, p.y - player.y) < 30) {
+        player.hp = Math.min(CONFIG.playerHp, player.hp + 30);
+        G.audio.pickup();
+        this.scene.remove(p.mesh);
+        this.healthPacks.splice(i, 1);
+      }
+    }
+    // Thug AI: chase Rex, hit him up close. A fresh crew takes a beat to
+    // react, so Rex is never jumped the instant he steps out of the car.
+    for (const t of [...this.thugs]) {
+      const dx = player.x - t.x, dy = player.y - t.y;
+      const d = Math.hypot(dx, dy);
+      t.attackT -= dt;
+      if (t.wakeT > 0) {
+        t.wakeT -= dt;
+      } else if (d > 34) {
+        const step = Math.min(d, t.speed * dt);
+        const np = this.world.moveCircle(t.x, t.y, (dx / (d || 1)) * step, (dy / (d || 1)) * step, 16);
+        t.x = np.x; t.y = np.y;
+        // The beach crew never leaves the sand.
+        if (t.beachBound) {
+          const b = CONFIG.beach;
+          t.x = Math.max(b.x0 + 16, Math.min(b.x1 - 36, t.x));
+          t.y = Math.max(b.y0 + 16, Math.min(b.y1 - 16, t.y));
+        }
+      } else if (t.attackT <= 0) {
+        t.attackT = 0.85;
+        if (player.inCar) {
+          player.inCar.hp = Math.max(0, player.inCar.hp - (t.king ? 8 : 3));
+          if (player.inCar.hp <= 0) player.inCar.wrecked = true;
+        } else {
+          player.takeDamage(t.king ? 11 : 2);
+          if (player.hp <= 0) { G.onBusted(); return; }
+        }
+        G.audio.hit();
+      }
+      t.angle = Math.atan2(dy, dx);
+      t.mesh.position.set(t.x, 0, t.y);
+      t.mesh.rotation.y = -t.angle;
     }
   }
 }

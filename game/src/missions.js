@@ -1,316 +1,374 @@
-// Neon Bay — Mara Voss's five jobs, in order. Each pays cash and starts the
-// next; a step's timer restarts with the step, and getting busted mid-fight
-// brings the crew back instead of skipping the fight. The King fight happens
-// on the lighthouse beach itself, the crew leashed to the sand.
-import { CFG } from './config.js';
-import { spawnThug } from './combat.js';
+// Neon Bay 3D — story: five jobs from fixer Mara Voss, plus three optional side
+// jobs (street race, store robbery, taxi fare). The King fight is staged on the
+// lighthouse beach itself, with the crew leashed to the sand.
+import * as THREE from '../vendor/three.min.js';
+import { CONFIG } from './config.js';
 
-const DEFS = [
-  {
-    name: 'First Wheels',
-    pay: CFG.missionPay[0],
-    intro: 'Mara: "New in town needs wheels. Take any car on the street — then bring it to my garage."',
-    steps: [
-      { label: 'Steal a car', timer: null },
-      { label: 'Bring the car to Mara\'s garage', timer: null },
-    ],
-  },
-  {
-    name: 'Hot Delivery',
-    pay: CFG.missionPay[1],
-    intro: 'Mara: "Package at the night market. Marina drop, and the clock is already running."',
-    steps: [
-      { label: 'Pick up the package at the night market', timer: CFG.deliverySeconds },
-      { label: 'Deliver the package to the marina', timer: CFG.deliverySeconds },
-    ],
-  },
-  {
-    name: 'Pier Cash',
-    pay: CFG.missionPay[2],
-    intro: 'Mara: "Tide King\'s boys skimmed my cut. It is sitting at the end of the pier. Take it back."',
-    steps: [
-      { label: 'Reach the end of the pier', timer: null },
-      { label: 'Take back the cash — clear the pier crew', timer: null },
-      { label: 'Bring the cash to Mara\'s garage', timer: null },
-    ],
-  },
-  {
-    name: 'Bay Trust',
-    pay: CFG.missionPay[3],
-    intro: 'Mara: "Bay Trust vault, one guard shift, forty-five seconds. Hold the floor and walk out rich."',
-    steps: [
-      { label: 'Get to the Bay Trust vault', timer: null },
-      { label: 'Hold the vault floor', timer: null },
-      { label: 'Bring the take to Mara\'s garage', timer: null },
-    ],
-  },
-  {
-    name: 'King at Lighthouse Point',
-    pay: CFG.missionPay[4],
-    intro: 'Mara: "King himself is waiting on the lighthouse beach. Finish him and this town is ours."',
-    steps: [
-      { label: 'Go to the lighthouse beach', timer: null },
-      { label: 'Defeat King on the beach', timer: null },
-    ],
-  },
+const { garage, market, marina, vault, pierEnd, beachCenter, beach, pay } = CONFIG;
+
+const RACE_POINTS = [
+  { x: 640, y: 336 }, { x: 1552, y: 640 }, { x: 2464, y: 1248 },
+  { x: 2768, y: 2160 }, { x: 1552, y: 2768 },
 ];
 
-export function createMissions() {
-  return {
-    index: 0, // 0..4, 5 means all five done
-    step: 0,
-    timer: null, // seconds left on this step, or null
-    target: null, // {x, y, label, radius}
-    boss: null, // King, while he lives
-    vaultT: 0, // seconds held on the vault floor
-    waveT: 0,
-    pierCash: null, // {x, y} once the pier crew is down
-    hasPackage: false,
-    done: false,
-  };
-}
-
-export function currentMission(G) {
-  return DEFS[G.missions.index] || null;
-}
-
-export function objectiveText(G) {
-  const m = G.missions;
-  if (m.done) return 'Neon Bay is yours.';
-  const def = DEFS[m.index];
-  if (!def) return '';
-  return `${def.name}: ${def.steps[m.step].label}`;
-}
-
-function setTarget(G, x, y, label, radius) {
-  G.missions.target = { x, y, label, radius: radius || 70 };
-}
-
-export function setupStep(G) {
-  const m = G.missions;
-  const def = DEFS[m.index];
-  if (!def) return;
-  const step = def.steps[m.step];
-  m.timer = step.timer;
-  m.vaultT = 0;
-  m.waveT = 0;
-  m.pierCash = null;
-  m.boss = null;
-  const spots = G.world.spots;
-  const beach = CFG.beach;
-  const beachCx = (beach.x0 + beach.x1) / 2;
-  const beachCy = (beach.y0 + beach.y1) / 2;
-  switch (m.index) {
-    case 0:
-      if (m.step === 0) setTarget(G, G.player.x + 100, G.player.y, 'Steal a car', 60);
-      else setTarget(G, spots.garage.x, spots.garage.y, "Mara's garage", 90);
-      break;
-    case 1:
-      if (m.step === 0) setTarget(G, spots.market.x, spots.market.y, 'Night market', 70);
-      else setTarget(G, spots.marina.x, spots.marina.y, 'Marina', 70);
-      break;
-    case 2:
-      if (m.step === 0) setTarget(G, G.world.pier.x1 - 30, (G.world.pier.y0 + G.world.pier.y1) / 2, 'End of the pier', 80);
-      else if (m.step === 1) {
-        setTarget(G, G.world.pier.x1 - 30, (G.world.pier.y0 + G.world.pier.y1) / 2, 'Pier crew', 60);
-        // The pier crew ambushes Rex at the end of the pier. Spawning here
-        // (not on arrival) means a bust mid-fight brings the crew back.
-        const px = G.world.pier.x1 - 60;
-        const py = (G.world.pier.y0 + G.world.pier.y1) / 2;
-        spawnThug(G, px - 40, py - 30, {});
-        spawnThug(G, px - 80, py + 20, {});
-        spawnThug(G, px - 20, py + 50, {});
-        G.hud.flash(G, "Tide King's crew is on the pier!");
-      }
-      else setTarget(G, spots.garage.x, spots.garage.y, "Mara's garage", 90);
-      break;
-    case 3:
-      if (m.step === 0) setTarget(G, spots.vault.x, spots.vault.y, 'Bay Trust vault', 80);
-      else if (m.step === 1) setTarget(G, spots.vault.x, spots.vault.y, 'Hold the vault', 110);
-      else setTarget(G, spots.garage.x, spots.garage.y, "Mara's garage", 90);
-      break;
-    case 4:
-      if (m.step === 0) {
-        // The goto circle reaches the whole beach: any sand counts.
-        setTarget(G, beachCx, beachCy, 'Lighthouse beach', 720);
-      } else {
-        setTarget(G, beachCx, beachCy, 'Defeat King', 720);
-        // King and his crew, leashed to the lighthouse sand. Spawning here
-        // (not on arrival) means a bust mid-fight brings the crew back.
-        const leash = { x0: beach.x0, y0: beach.y0, x1: beach.x1, y1: beach.y1 };
-        const king = spawnThug(G, 3300, 1300, { hp: CFG.kingHp, speed: CFG.kingSpeed, king: true, leash, name: 'King' });
-        m.boss = king;
-        spawnThug(G, 3220, 1500, { leash });
-        spawnThug(G, 3350, 1700, { leash });
-        spawnThug(G, 3200, 1900, { leash });
-        spawnThug(G, 3380, 1100, { leash });
-        G.hud.flash(G, 'King: "This beach is mine, Marlowe."');
-        G.audio.fail();
-      }
-      break;
-    default:
-      break;
+export class MissionSys {
+  constructor(scene, world, rng) {
+    this.scene = scene;
+    this.world = world;
+    this.rng = rng;
+    this.index = 0;
+    this.step = 0;
+    this.timer = 0;
+    this.target = { x: garage.x, y: garage.y, label: 'Steal a car' };
+    this.boss = null;
+    this.vaultT = 0;
+    this.pierCash = null;
+    this._waveFlags = {};
+    // Main beacon: tall light pillar at the current objective.
+    const geo = new THREE.CylinderGeometry(10, 14, 320, 10, 1, true);
+    this.beacon = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      color: 0xffd24d, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    this.beacon.position.set(garage.x, 160, garage.y);
+    scene.add(this.beacon);
+    const ringGeo = new THREE.RingGeometry(26, 34, 24);
+    this.ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
+      color: 0xffd24d, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false,
+    }));
+    this.ring.rotation.x = -Math.PI / 2;
+    this.ring.position.set(garage.x, 1.2, garage.y);
+    scene.add(this.ring);
+    // Side-job markers (green pillars).
+    this.sideJobs = [
+      { id: 'race', name: 'Street Race', x: CONFIG.raceStart.x, y: CONFIG.raceStart.y, state: 'idle', cp: 0, timer: 0 },
+      { id: 'robbery', name: 'Store Robbery', x: CONFIG.store.x, y: CONFIG.store.y, state: 'idle', hold: 0 },
+      { id: 'taxi', name: 'Taxi Fare', x: CONFIG.taxiStand.x, y: CONFIG.taxiStand.y, state: 'idle', timer: 0, ped: null },
+    ];
+    for (const sj of this.sideJobs) {
+      const m = new THREE.Mesh(
+        new THREE.CylinderGeometry(8, 10, 120, 8, 1, true),
+        new THREE.MeshBasicMaterial({ color: 0x2aff5a, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
+      );
+      m.position.set(sj.x, 60, sj.y);
+      scene.add(m);
+      sj.beacon = m;
+    }
   }
-  if (m.step === 0) G.hud.flash(G, def.intro);
-}
 
-export function startMissions(G) {
-  G.missions.index = 0;
-  G.missions.step = 0;
-  G.missions.done = false;
-  setupStep(G);
-}
-
-function nextStep(G) {
-  const m = G.missions;
-  const def = DEFS[m.index];
-  m.step++;
-  if (m.step >= def.steps.length) {
-    completeMission(G);
-    return;
+  start() {
+    this.index = 0;
+    this.step = 0;
+    this.timer = 0;
+    this.boss = null;
+    this.vaultT = 0;
+    this._clearPierCash();
+    this.setTarget(null, 'Steal a car');
   }
-  setupStep(G);
-}
 
-function completeMission(G) {
-  const m = G.missions;
-  const def = DEFS[m.index];
-  G.player.money += def.pay;
-  G.audio.coin();
-  G.audio.jingle();
-  G.hud.flash(G, `${def.name} done — $${def.pay} paid.`);
-  m.index++;
-  m.step = 0;
-  if (m.index >= DEFS.length) {
-    m.done = true;
-    m.target = null;
-    m.boss = null;
-    G.state = 'won';
-    G.clearSave();
+  setTarget(pos, label) {
+    if (pos) { this.target.x = pos.x; this.target.y = pos.y; }
+    this.target.label = label;
+  }
+
+  _clearPierCash() {
+    if (this.pierCash) {
+      this.scene.remove(this.pierCash.mesh);
+      this.pierCash = null;
+    }
+  }
+
+  _spawnPierCash(G) {
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(18, 12, 14),
+      new THREE.MeshStandardMaterial({ color: 0x2aff5a, roughness: 0.5, emissive: 0x2aff5a, emissiveIntensity: 0.5 })
+    );
+    m.position.set(pierEnd.x, 6, pierEnd.y);
+    this.scene.add(m);
+    this.pierCash = { x: pierEnd.x, y: pierEnd.y, mesh: m };
+  }
+
+  _spawnBeachCrew(G) {
+    const spots = [
+      [3270, 1500, true], [3200, 1300, false], [3360, 1400, false],
+      [3220, 1800, false], [3380, 1900, false],
+    ];
+    for (const [x, y, king] of spots) {
+      const t = G.combat.spawnThug(x, y, king);
+      t.beachBound = true; // the crew is leashed to the sand
+      if (king) this.boss = t;
+    }
+  }
+
+  _complete(G, amount) {
+    G.player.money += amount;
     G.audio.jingle();
-    return;
+    G.hud.toast(`Job done — +$${amount}`);
+    this.index++;
+    this.step = 0;
+    this.timer = 0;
+    this.vaultT = 0;
+    this._waveFlags = {};
+    G.save();
   }
-  G.save();
-  setupStep(G);
-}
 
-function restartStep(G, why) {
-  G.hud.flash(G, why);
-  G.audio.fail();
-  setupStep(G);
-}
-
-export function onEvent(G, type, data) {
-  const m = G.missions;
-  if (m.done || G.state !== 'playing') return;
-  if (type === 'steal' && m.index === 0 && m.step === 0) {
-    nextStep(G);
-  }
-  if (type === 'thugDown') {
-    if (m.index === 2 && m.step === 1 && G.combat.thugs.length === 0 && !m.pierCash) {
-      m.pierCash = { x: G.world.pier.x1 - 60, y: (G.world.pier.y0 + G.world.pier.y1) / 2 };
-      G.hud.flash(G, 'Crew down — grab the cash bag.');
-    }
-  }
-  if (type === 'kingDown' && m.index === 4 && m.step === 1) {
-    m.boss = null;
-    nextStep(G); // completes mission 5, which wins the game
-  }
-}
-
-// Busted mid-fight brings the crew back instead of skipping the fight.
-export function onBusted(G) {
-  const m = G.missions;
-  if (m.done) return;
-  G.combat.thugs = [];
-  G.combat.bullets = [];
-  G.combat.packs = [];
-  setupStep(G);
-}
-
-function atTarget(G) {
-  const t = G.missions.target;
-  if (!t) return false;
-  return Math.hypot(G.player.x - t.x, G.player.y - t.y) < t.radius;
-}
-
-export function updateMissions(G, dt) {
-  const m = G.missions;
-  if (m.done || G.state !== 'playing') return;
-  // The step timer restarts with the step; running out restarts the step.
-  if (m.timer !== null) {
-    m.timer -= dt;
-    if (m.timer <= 0) {
-      restartStep(G, 'Out of time — the step starts over.');
-      return;
-    }
-  }
-  const spots = G.world.spots;
-  switch (m.index) {
-    case 0: {
-      if (m.step === 0) {
-        // The target follows the nearest car worth stealing.
-        const car = G.vehicles.nearestCar(G, G.player.x, G.player.y);
-        if (car) setTarget(G, car.x, car.y, 'Steal a car', 60);
-      } else if (G.player.inCar && atTarget(G)) {
-        nextStep(G);
+  resetForBusted(G) {
+    G.combat.clearThugs();
+    this.boss = null;
+    this._clearPierCash();
+    this.vaultT = 0;
+    this.timer = 0;
+    this._waveFlags = {};
+    if (this.index === 0) { this.step = 0; this.setTarget(null, 'Steal a car'); }
+    if (this.index === 1) { this.step = 0; this.setTarget(market, 'Pick up the package at the night market'); }
+    if (this.index === 2) { this.step = 0; this.setTarget(pierEnd, 'Take back the pier cash'); }
+    if (this.index === 3) { this.step = 0; this.setTarget(vault, 'Get to the Bay Trust vault'); }
+    if (this.index === 4) { this.step = 0; this.setTarget(beachCenter, 'Finish King at Lighthouse Point'); }
+    // Side jobs reset to idle (their fare/ped is gone).
+    for (const sj of this.sideJobs) {
+      if (sj.state === 'active') {
+        sj.state = 'idle';
+        sj.cp = 0; sj.hold = 0;
+        if (sj.ped) { this.scene.remove(sj.ped.mesh); sj.ped = null; }
       }
-      break;
     }
-    case 1: {
-      if (m.step === 0 && atTarget(G)) {
-        m.hasPackage = true;
+  }
+
+  // E pressed near a side-job spot (on foot only).
+  trySideJob(G) {
+    if (this.index < 1 || this.index > 4) return false;
+    if (this.index === 4 && this.step === 1) return false;
+    const p = G.player;
+    if (p.inCar) return false;
+    for (const sj of this.sideJobs) {
+      if (sj.state !== 'idle') continue;
+      if (Math.hypot(sj.x - p.x, sj.y - p.y) < 44) {
+        sj.state = 'active';
+        if (sj.id === 'race') {
+          sj.cp = 0; sj.timer = 90;
+          this.setTarget(RACE_POINTS[0], 'Race: checkpoint 1/5');
+          G.hud.toast('Street race! Hit all 5 checkpoints in 90s');
+        } else if (sj.id === 'robbery') {
+          sj.hold = 0;
+          G.hud.toast('Hold still in the store…');
+        } else {
+          sj.timer = 120;
+          const ped = G.traffic.peds.find((q) => !q.down && Math.hypot(q.x - sj.x, q.y - sj.y) < 400)
+            || G.traffic.peds[0];
+          sj.ped = ped;
+          G.hud.toast('Fare picked up — take them to Harbor Row');
+        }
         G.audio.pickup();
-        nextStep(G);
-      } else if (m.step === 1 && atTarget(G)) {
-        m.hasPackage = false;
-        nextStep(G);
+        return true;
       }
-      break;
     }
-    case 2: {
-      if (m.step === 0 && atTarget(G)) {
-        // Entering the ambush: setupStep spawns the pier crew.
-        nextStep(G);
-      } else if (m.step === 1) {
-        if (m.pierCash && Math.hypot(G.player.x - m.pierCash.x, G.player.y - m.pierCash.y) < 34) {
-          m.pierCash = null;
+    return false;
+  }
+
+  update(dt, G) {
+    const p = G.player;
+    const dist = (t) => Math.hypot(t.x - p.x, t.y - p.y);
+    // Beacon follows the current objective.
+    this.beacon.position.set(this.target.x, 160, this.target.y);
+    this.ring.position.set(this.target.x, 1.2, this.target.y);
+    const pulse = 0.22 + Math.sin(G.time * 3) * 0.08;
+    this.beacon.material.opacity = pulse;
+    // ---- Main story ----
+    if (this.index === 0) {
+      if (this.step === 0) {
+        // Nearest stealable car becomes the target.
+        let best = null, bd = Infinity;
+        for (const c of G.vehicles.cars) {
+          if (c.kind !== 'parked' || c.wrecked || c.owner) continue;
+          const d = Math.hypot(c.x - p.x, c.y - p.y);
+          if (d < bd) { bd = d; best = c; }
+        }
+        if (best) this.setTarget(best, 'Steal a car');
+        if (p.inCar) {
+          this.step = 1;
+          this.setTarget(garage, "Drive to Mara's garage");
+          G.hud.toast('Nice wheels. Take them to Mara.');
+        }
+      } else if (dist(garage) < 90) {
+        this._complete(G, pay.m1);
+        this.setTarget(market, 'Pick up the package at the night market');
+      }
+    } else if (this.index === 1) {
+      if (this.step === 0) {
+        if (dist(market) < 65) {
+          this.step = 1;
+          this.timer = CONFIG.m2TimeLimit;
+          this.setTarget(marina, 'Deliver to the marina — timed!');
           G.audio.pickup();
-          nextStep(G);
         }
-      } else if (m.step === 2 && atTarget(G)) {
-        nextStep(G);
+      } else {
+        this.timer -= dt;
+        this.setTarget(marina, `Deliver to the marina — ${Math.max(0, Math.ceil(this.timer))}s`);
+        if (this.timer <= 0) {
+          this.step = 0;
+          this.setTarget(market, 'Too slow — pick up the package again');
+          G.hud.toast('Too slow! Back to the market.');
+        } else if (dist(marina) < 65) {
+          this._complete(G, pay.m2);
+          this.setTarget(pierEnd, 'Take back the pier cash');
+        }
       }
-      break;
-    }
-    case 3: {
-      if (m.step === 0 && atTarget(G)) {
-        nextStep(G);
-      } else if (m.step === 1) {
-        const inVault = Math.hypot(G.player.x - spots.vault.x, G.player.y - spots.vault.y) < 110;
-        if (inVault) {
-          m.vaultT += dt;
-          m.waveT += dt;
-          if (m.waveT > 11) {
-            m.waveT = 0;
-            spawnThug(G, spots.vault.x + 140, spots.vault.y - 60, {});
-            spawnThug(G, spots.vault.x - 140, spots.vault.y + 60, {});
+    } else if (this.index === 2) {
+      if (this.step === 0) {
+        if (dist(pierEnd) < 100) {
+          this.step = 1;
+          for (const [x, y] of [[3690, 2350], [3710, 2450], [3670, 2400], [3700, 2380]]) {
+            G.combat.spawnThug(x, y, false);
           }
-          if (m.vaultT >= CFG.vaultHoldSeconds) nextStep(G);
+          this.setTarget(pierEnd, 'Take back the pier cash — fight!');
+          G.hud.toast('Tide Kings on the pier!');
         }
-      } else if (m.step === 2 && atTarget(G)) {
-        nextStep(G);
+      } else if (this.step === 1) {
+        if (G.combat.thugs.length === 0) {
+          this._spawnPierCash(G);
+          this.step = 2;
+          this.setTarget(pierEnd, 'Grab the cash');
+        }
+      } else if (this.step === 2) {
+        if (this.pierCash && dist(this.pierCash) < 35) {
+          this._clearPierCash();
+          G.audio.coin();
+          this.step = 3;
+          this.setTarget(garage, "Bring the cash to Mara's garage");
+        }
+      } else if (dist(garage) < 90) {
+        this._complete(G, pay.m3);
+        this.setTarget(vault, 'Get to the Bay Trust vault');
       }
-      break;
-    }
-    case 4: {
-      if (m.step === 0 && atTarget(G)) {
-        // Entering the fight: setupStep spawns King and his crew on the sand.
-        nextStep(G);
+    } else if (this.index === 3) {
+      if (this.step === 0) {
+        if (dist(vault) < 65) {
+          this.step = 1;
+          this.vaultT = CONFIG.vaultHoldTime;
+          for (const [x, y] of [[1600, 1700], [1810, 1700], [1704, 1740]]) {
+            G.combat.spawnThug(x, y, false);
+          }
+          G.hud.toast('Hold the vault — Kings incoming!');
+        }
+      } else if (this.step === 1) {
+        this.vaultT -= dt;
+        this.setTarget(vault, `Hold the vault — ${Math.max(0, Math.ceil(this.vaultT))}s`);
+        if (this.vaultT < 30 && !this._waveFlags.w2) {
+          this._waveFlags.w2 = true;
+          for (const [x, y] of [[1640, 1560], [1770, 1560], [1600, 1620]]) G.combat.spawnThug(x, y, false);
+        }
+        if (this.vaultT < 15 && !this._waveFlags.w3) {
+          this._waveFlags.w3 = true;
+          for (const [x, y] of [[1810, 1620], [1640, 1760], [1780, 1760]]) G.combat.spawnThug(x, y, false);
+        }
+        if (this.vaultT <= 0) {
+          this.step = 2;
+          this.setTarget(garage, "Bring the vault cash to Mara's garage");
+          G.hud.toast('Vault held! Get out of there.');
+        }
+      } else if (dist(garage) < 90) {
+        this._complete(G, pay.m4);
+        this.setTarget(beachCenter, 'Finish King at Lighthouse Point');
       }
-      break;
+    } else if (this.index === 4) {
+      if (this.step === 0) {
+        if (dist(beachCenter) < 210) {
+          this.step = 1;
+          this._spawnBeachCrew(G);
+          this.setTarget(beachCenter, 'Finish King on the beach!');
+          G.hud.toast('King is here. End it.');
+        }
+      } else if (this.boss && !G.combat.thugs.includes(this.boss)) {
+        // King is down — the city is yours.
+        this.boss = null;
+        G.onWin();
+      }
     }
-    default:
-      break;
+    // ---- Side jobs ----
+    for (const sj of this.sideJobs) {
+      sj.beacon.visible = sj.state === 'idle' && this.index >= 1 && this.index <= 4;
+      if (sj.state !== 'active') continue;
+      if (sj.id === 'race') {
+        sj.timer -= dt;
+        const cp = RACE_POINTS[sj.cp];
+        this.setTarget(cp, `Race: checkpoint ${sj.cp + 1}/5 — ${Math.max(0, Math.ceil(sj.timer))}s`);
+        if (dist(cp) < 55) {
+          sj.cp++;
+          G.audio.coin();
+          if (sj.cp >= RACE_POINTS.length) {
+            sj.state = 'done';
+            p.money += pay.race;
+            G.audio.jingle();
+            G.hud.toast(`Race won — +$${pay.race}`);
+            this._restoreMainTarget();
+          }
+        } else if (sj.timer <= 0) {
+          sj.state = 'idle';
+          G.hud.toast('Race lost — try again at the start line');
+          this._restoreMainTarget();
+        }
+      } else if (sj.id === 'robbery') {
+        if (dist(sj) < 40) {
+          sj.hold += dt;
+          this.setTarget(sj, `Robbing the store… ${Math.ceil(5 - sj.hold)}s`);
+          if (sj.hold >= 5) {
+            sj.state = 'done';
+            p.money += pay.robbery;
+            G.police.addWanted(2, G);
+            G.audio.coin();
+            G.hud.toast(`+$${pay.robbery} — and the cops know!`);
+            this._restoreMainTarget();
+          }
+        } else {
+          sj.hold = 0;
+        }
+      } else if (sj.id === 'taxi') {
+        sj.timer -= dt;
+        const dest = { x: 1100, y: 2600 };
+        if (sj.ped) {
+          // The fare follows Rex on foot.
+          if (!p.inCar) {
+            const d = Math.hypot(sj.ped.x - p.x, sj.ped.y - p.y);
+            if (d > 34) {
+              const np = this.world.moveCircle(sj.ped.x, sj.ped.y, ((p.x - sj.ped.x) / d) * 130 * dt, ((p.y - sj.ped.y) / d) * 130 * dt, 12);
+              sj.ped.x = np.x; sj.ped.y = np.y;
+              sj.ped.mesh.position.set(sj.ped.x, 0, sj.ped.y);
+            }
+          }
+        }
+        this.setTarget(dest, `Taxi fare — ${Math.max(0, Math.ceil(sj.timer))}s`);
+        if (dist(dest) < 50) {
+          sj.state = 'done';
+          p.money += pay.taxi;
+          G.audio.jingle();
+          G.hud.toast(`Fare delivered — +$${pay.taxi}`);
+          this._restoreMainTarget();
+        } else if (sj.timer <= 0) {
+          sj.state = 'idle';
+          sj.ped = null;
+          G.hud.toast('Fare walked off…');
+          this._restoreMainTarget();
+        }
+      }
+    }
+  }
+
+  // Restore the main-story objective (position + label) after a side job ends.
+  _restoreMainTarget() {
+    const L = {
+      m1a: 'Steal a car', m1b: "Drive to Mara's garage",
+      m2a: 'Pick up the package at the night market', m2b: 'Deliver to the marina — timed!',
+      m3a: 'Take back the pier cash', m3b: 'Take back the pier cash — fight!',
+      m3c: 'Grab the cash', m3d: "Bring the cash to Mara's garage",
+      m4a: 'Get to the Bay Trust vault', m4b: 'Hold the vault',
+      m4c: "Bring the vault cash to Mara's garage",
+      m5a: 'Finish King at Lighthouse Point', m5b: 'Finish King on the beach!',
+    };
+    let pos = garage, label = 'Steal a car';
+    if (this.index === 0) { pos = this.step === 0 ? { x: 488, y: 1360 } : garage; label = this.step === 0 ? L.m1a : L.m1b; }
+    else if (this.index === 1) { pos = this.step === 0 ? market : marina; label = this.step === 0 ? L.m2a : L.m2b; }
+    else if (this.index === 2) { pos = this.step <= 2 ? pierEnd : garage; label = [L.m3a, L.m3b, L.m3c, L.m3d][this.step]; }
+    else if (this.index === 3) { pos = this.step <= 1 ? vault : garage; label = [L.m4a, L.m4b, L.m4c][this.step]; }
+    else if (this.index === 4) { pos = beachCenter; label = this.step === 0 ? L.m5a : L.m5b; }
+    this.setTarget(pos, label);
   }
 }

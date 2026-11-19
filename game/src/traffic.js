@@ -1,143 +1,127 @@
-// Neon Bay — pedestrians. Crowds stroll the sidewalks and run when shots
-// are fired; a stolen car's driver flees on foot the same way.
-import { CFG } from './config.js';
-import { blockedCircle } from './world.js';
+// Neon Bay 3D — pedestrians: sidewalk strollers who flee gunfire and go down
+// when a car hits them.
+import * as THREE from '../vendor/three.min.js';
+import { CONFIG } from './config.js';
 
-const SHIRTS = ['#e8e8e8', '#d4a03a', '#3a9e80', '#c96f4a', '#7a4ac9', '#4a7ec9', '#e87a2a'];
+const { roadCenters, roadHalf } = CONFIG;
+const SHIRTS = [0xd8d8d8, 0x4a8ac2, 0xc24a6a, 0x6ac24a, 0xe8b13c, 0x8a5ac2, 0x3aa8a0];
 
-export function createPedestrians(world, rng) {
-  const peds = [];
-  for (let i = 0; i < CFG.pedestrians; i++) {
-    peds.push(spawnPed(world, rng));
+function makePedMesh(color) {
+  const g = new THREE.Group();
+  const torso = new THREE.Mesh(
+    new THREE.BoxGeometry(14, 16, 9),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.8 })
+  );
+  torso.position.y = 20;
+  torso.castShadow = true;
+  const head = new THREE.Mesh(
+    new THREE.BoxGeometry(9, 9, 9),
+    new THREE.MeshStandardMaterial({ color: 0xd8a880, roughness: 0.8 })
+  );
+  head.position.y = 32;
+  head.castShadow = true;
+  const legs = new THREE.Mesh(
+    new THREE.BoxGeometry(12, 12, 8),
+    new THREE.MeshStandardMaterial({ color: 0x2a2a33, roughness: 0.9 })
+  );
+  legs.position.y = 6;
+  g.add(torso, head, legs);
+  return g;
+}
+
+export class TrafficSys {
+  constructor(scene, world, rng) {
+    this.scene = scene;
+    this.world = world;
+    this.rng = rng;
+    this.peds = [];
   }
-  return peds;
-}
 
-function spawnPed(world, rng) {
-  const horizontal = rng.chance(0.5);
-  const road = rng.pick(world.centers);
-  const along = rng.range(60, CFG.citySize - 60);
-  const side = rng.chance(0.5) ? 1 : -1;
-  const off = side * 42;
-  return {
-    x: horizontal ? along : road + off,
-    y: horizontal ? road + off : along,
-    angle: 0,
-    speed: rng.range(38, 62),
-    axis: horizontal ? 'x' : 'y',
-    dir: rng.chance(0.5) ? 1 : -1,
-    line: road + off,
-    shirt: rng.pick(SHIRTS),
-    flee: false,
-    fleeT: 0,
-    fleeX: 0,
-    fleeY: 0,
-    down: false,
-    downT: 0,
-  };
-}
-
-export function fleeDriver(G, x, y) {
-  const ped = spawnPed(G.world, G.rng);
-  ped.x = x;
-  ped.y = y;
-  ped.flee = true;
-  ped.fleeT = 3;
-  ped.fleeX = x;
-  ped.fleeY = y;
-  G.traffic.peds.push(ped);
-}
-
-export function scarePeds(G, x, y, radius) {
-  for (const ped of G.traffic.peds) {
-    if (ped.down) continue;
-    const d = Math.hypot(ped.x - x, ped.y - y);
-    if (d < radius) {
-      ped.flee = true;
-      ped.fleeT = 2.5;
-      ped.fleeX = x;
-      ped.fleeY = y;
+  spawn(n) {
+    for (let i = 0; i < n; i++) {
+      const vertical = this.rng.chance(0.5);
+      const c = this.rng.pick(roadCenters);
+      const along = this.rng.range(120, 2980);
+      const side = this.rng.pick([-1, 1]);
+      const x = vertical ? c + side * (roadHalf + 10) : along;
+      const y = vertical ? along : c + side * (roadHalf + 10);
+      const mesh = makePedMesh(this.rng.pick(SHIRTS));
+      mesh.position.set(x, 0, y);
+      this.scene.add(mesh);
+      this.peds.push({
+        x, y, angle: this.rng.range(0, Math.PI * 2),
+        speed: this.rng.range(28, 55), down: false, downT: 0,
+        axis: vertical ? 'y' : 'x', dir: this.rng.pick([-1, 1]), mesh,
+        phase: this.rng.range(0, Math.PI * 2),
+      });
     }
   }
-}
 
-export function updateTraffic(G, dt) {
-  const world = G.world;
-  for (const ped of G.traffic.peds) {
-    if (ped.down) {
-      ped.downT += dt;
-      if (ped.downT > 6) {
-        // Gets up and walks away, shaken.
-        ped.down = false;
-        ped.downT = 0;
-        ped.flee = true;
-        ped.fleeT = 2;
-        ped.fleeX = G.player.x;
-        ped.fleeY = G.player.y;
-      }
-      continue;
-    }
-    if (ped.flee) {
-      ped.fleeT -= dt;
-      if (ped.fleeT <= 0) {
-        ped.flee = false;
-      } else {
-        const dx = ped.x - ped.fleeX;
-        const dy = ped.y - ped.fleeY;
-        const d = Math.hypot(dx, dy) || 1;
-        const sp = ped.speed * 2.4;
-        const nx = ped.x + (dx / d) * sp * dt;
-        const ny = ped.y + (dy / d) * sp * dt;
-        if (!blockedCircle(world, nx, ny, 10)) {
-          ped.x = nx;
-          ped.y = ny;
+  update(dt, G) {
+    const shot = G.lastShot;
+    for (const p of this.peds) {
+      if (p.down) {
+        p.downT += dt;
+        if (p.downT > 20) { // get up and walk away
+          p.down = false;
+          p.downT = 0;
+          p.mesh.rotation.x = 0;
+          p.mesh.position.y = 0;
         }
-        ped.angle = Math.atan2(dy, dx);
         continue;
       }
-    }
-    // Stroll along the sidewalk; turn at a junction sometimes.
-    const step = ped.dir * ped.speed * dt;
-    let nx = ped.x;
-    let ny = ped.y;
-    if (ped.axis === 'x') {
-      nx += step;
-      ny = ped.line;
-    } else {
-      ny += step;
-      nx = ped.line;
-    }
-    for (const c of world.centers) {
-      const crossed = ped.axis === 'x'
-        ? (ped.dir > 0 ? ped.x < c && nx >= c : ped.x > c && nx <= c)
-        : (ped.dir > 0 ? ped.y < c && ny >= c : ped.y > c && ny <= c);
-      if (!crossed) continue;
-      if (G.rng.chance(0.3)) {
-        const side = G.rng.chance(0.5) ? 42 : -42;
-        if (ped.axis === 'x') {
-          ped.axis = 'y';
-          ped.line = c + side;
-          ped.dir = G.rng.chance(0.5) ? 1 : -1;
-          nx = ped.line;
-        } else {
-          ped.axis = 'x';
-          ped.line = c + side;
-          ped.dir = G.rng.chance(0.5) ? 1 : -1;
-          ny = ped.line;
-        }
+      let tx = 0, ty = 0;
+      // Dodge fast cars bearing down on the sidewalk.
+      let danger = null, dangerD = 85;
+      for (const c of G.vehicles.cars) {
+        if (Math.abs(c.speed) < 70) continue;
+        const cd = Math.hypot(p.x - c.x, p.y - c.y);
+        if (cd < dangerD) { danger = c; dangerD = cd; }
       }
-      break;
+      if (danger) {
+        const d = Math.max(1, dangerD);
+        tx = (p.x - danger.x) / d;
+        ty = (p.y - danger.y) / d;
+        const sp = 165;
+        const np = this.world.moveCircle(p.x, p.y, tx * sp * dt, ty * sp * dt, 12);
+        p.x = np.x; p.y = np.y;
+        p.angle = Math.atan2(ty, tx);
+      } else if (shot && Math.hypot(p.x - shot.x, p.y - shot.y) < 420) {
+        // Flee the gunfire.
+        const d = Math.max(1, Math.hypot(p.x - shot.x, p.y - shot.y));
+        tx = (p.x - shot.x) / d;
+        ty = (p.y - shot.y) / d;
+        const sp = 150;
+        const np = this.world.moveCircle(p.x, p.y, tx * sp * dt, ty * sp * dt, 12);
+        p.x = np.x; p.y = np.y;
+        p.angle = Math.atan2(ty, tx);
+      } else {
+        // Stroll the sidewalk; turn at junctions sometimes.
+        const ncx = this.world.nearestRoadCenter(p.x);
+        const ncy = this.world.nearestRoadCenter(p.y);
+        const nearJunction = p.axis === 'x'
+          ? Math.abs(p.x - ncx) < 20
+          : Math.abs(p.y - ncy) < 20;
+        if (nearJunction && this.rng.chance(dt * 0.3)) {
+          if (p.axis === 'x') {
+            p.x = ncx + (p.y - ncy >= 0 ? 54 : -54);
+            p.axis = 'y';
+          } else {
+            p.y = ncy + (p.x - ncx >= 0 ? 54 : -54);
+            p.axis = 'x';
+          }
+          p.dir = this.rng.pick([-1, 1]);
+        }
+        const dx = p.axis === 'x' ? p.dir * p.speed * dt : 0;
+        const dy = p.axis === 'y' ? p.dir * p.speed * dt : 0;
+        const np = this.world.moveCircle(p.x, p.y, dx, dy, 12);
+        if (Math.abs(np.x - (p.x + dx)) > 1 || Math.abs(np.y - (p.y + dy)) > 1) p.dir *= -1;
+        p.x = np.x; p.y = np.y;
+        p.angle = Math.atan2(dy, dx);
+      }
+      p.mesh.position.set(p.x, 0, p.y);
+      p.mesh.rotation.y = -p.angle;
+      p.mesh.position.y = Math.abs(Math.sin(G.time * 6 + p.phase)) * 1.2;
     }
-    if (nx < 30 || nx > CFG.citySize - 30) {
-      ped.dir *= -1;
-      nx = Math.max(30, Math.min(CFG.citySize - 30, nx));
-    }
-    if (ny < 30 || ny > CFG.citySize - 30) {
-      ped.dir *= -1;
-      ny = Math.max(30, Math.min(CFG.citySize - 30, ny));
-    }
-    ped.x = nx;
-    ped.y = ny;
-    ped.angle = ped.axis === 'x' ? (ped.dir > 0 ? 0 : Math.PI) : (ped.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
   }
 }

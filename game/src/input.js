@@ -1,71 +1,51 @@
-// Neon Bay — keyboard and mouse. One object owns every key and the pointer,
-// so the game logic never touches a DOM event directly.
+// Neon Bay 3D — keyboard + mouse input. WASD moves, mouse orbits (right-drag)
+// and aims, wheel zooms. Edge-triggered presses are queued per frame.
 export class Input {
   constructor(canvas) {
     this.keys = new Set();
-    this.mouseX = 0;
-    this.mouseY = 0;
-    this.mouseDown = false;
-    this.clicked = false; // set on mousedown, consumed by the game each frame
-    this.anyKey = false; // set on any keydown, consumed by menus
-    this._canvas = canvas;
-    this._onKeyDown = (e) => {
-      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-      this.keys.add(k);
-      this.anyKey = true;
-      if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
-    };
-    this._onKeyUp = (e) => {
-      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-      this.keys.delete(k);
-    };
-    this._onMouseMove = (e) => {
+    this.pressedQueue = [];
+    this.mouse = { x: 0, y: 0, dx: 0, dy: 0, down: false, rdown: false, wheel: 0 };
+    this.canvas = canvas;
+    window.addEventListener('keydown', (e) => {
+      if (e.repeat) return;
+      this.keys.add(e.code);
+      this.pressedQueue.push(e.code);
+      if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
+    });
+    window.addEventListener('keyup', (e) => this.keys.delete(e.code));
+    window.addEventListener('blur', () => this.keys.clear());
+    canvas.addEventListener('mousemove', (e) => {
       const r = canvas.getBoundingClientRect();
-      this.mouseX = (e.clientX - r.left) * (canvas.width / r.width);
-      this.mouseY = (e.clientY - r.top) * (canvas.height / r.height);
-    };
-    this._onMouseDown = (e) => {
-      if (e.button !== 0) return;
-      this.mouseDown = true;
-      this.clicked = true;
-      this._onMouseMove(e);
-    };
-    this._onMouseUp = (e) => {
-      if (e.button !== 0) return;
-      this.mouseDown = false;
-    };
-    this._onBlur = () => {
-      this.keys.clear();
-      this.mouseDown = false;
-    };
-    window.addEventListener('keydown', this._onKeyDown);
-    window.addEventListener('keyup', this._onKeyUp);
-    canvas.addEventListener('mousemove', this._onMouseMove);
-    canvas.addEventListener('mousedown', this._onMouseDown);
-    window.addEventListener('mouseup', this._onMouseUp);
-    window.addEventListener('blur', this._onBlur);
+      this.mouse.x = e.clientX - r.left;
+      this.mouse.y = e.clientY - r.top;
+      this.mouse.dx += e.movementX || 0;
+      this.mouse.dy += e.movementY || 0;
+    });
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button === 0) this.mouse.down = true;
+      if (e.button === 2) this.mouse.rdown = true;
+    });
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 0) this.mouse.down = false;
+      if (e.button === 2) this.mouse.rdown = false;
+    });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    canvas.addEventListener('wheel', (e) => {
+      this.mouse.wheel += e.deltaY;
+      e.preventDefault();
+    }, { passive: false });
   }
-  down(k) {
-    return this.keys.has(k);
-  }
-  // WASD plus arrows, as a unit-ish vector.
-  moveVector() {
-    let x = 0;
-    let y = 0;
-    if (this.down('a') || this.down('ArrowLeft')) x -= 1;
-    if (this.down('d') || this.down('ArrowRight')) x += 1;
-    if (this.down('w') || this.down('ArrowUp')) y -= 1;
-    if (this.down('s') || this.down('ArrowDown')) y += 1;
-    if (x !== 0 && y !== 0) {
-      const inv = 1 / Math.SQRT2;
-      x *= inv;
-      y *= inv;
-    }
-    return { x, y };
-  }
-  // One-frame events, cleared by the main loop after each update.
+
+  down(code) { return this.keys.has(code); }
+
+  // True once, the frame the key went down.
+  pressed(code) { return this.pressedQueue.includes(code); }
+
+  // Call at the end of each frame.
   endFrame() {
-    this.clicked = false;
-    this.anyKey = false;
+    this.pressedQueue.length = 0;
+    this.mouse.dx = 0;
+    this.mouse.dy = 0;
+    this.mouse.wheel = 0;
   }
 }

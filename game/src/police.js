@@ -1,250 +1,260 @@
-// Neon Bay — the wanted system and the NBPD. Stars climb on crime and cool
-// off when Rex lays low; cruisers chase and ram, foot officers close in to
-// arrest, and a cop shoots at Rex's car — never through a building.
-import { CFG } from './config.js';
-import { blockedCircle, moveCircle, isRoad } from './world.js';
-import { spawnCopCar } from './vehicles.js';
+// Neon Bay 3D — wanted stars, NBPD foot cops and cruisers, the police helicopter
+// and roadblocks at high wanted. Wanted decays when Rex lays low.
+import * as THREE from '../vendor/three.min.js';
+import { CONFIG } from './config.js';
 
-export function createPolice() {
-  return {
-    wanted: 0, // 0..5, fractional while cooling
-    sinceCrime: 999,
-    cops: [], // foot officers {x,y,hp,arrestT,shootCd}
-    cruisers: [], // {car}
-    spawnT: 0,
-    sirenOn: false,
-  };
+const { roadCenters, roadHalf } = CONFIG;
+
+function makeCopMesh() {
+  const g = new THREE.Group();
+  const torso = new THREE.Mesh(
+    new THREE.BoxGeometry(16, 16, 10),
+    new THREE.MeshStandardMaterial({ color: 0x1a2a4a, roughness: 0.8 })
+  );
+  torso.position.y = 21;
+  torso.castShadow = true;
+  const head = new THREE.Mesh(
+    new THREE.BoxGeometry(10, 9, 10),
+    new THREE.MeshStandardMaterial({ color: 0xd8a880, roughness: 0.8 })
+  );
+  head.position.y = 33;
+  const cap = new THREE.Mesh(
+    new THREE.BoxGeometry(11, 4, 11),
+    new THREE.MeshStandardMaterial({ color: 0x10203a, roughness: 0.7 })
+  );
+  cap.position.y = 39;
+  const legs = new THREE.Mesh(
+    new THREE.BoxGeometry(13, 13, 8),
+    new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.9 })
+  );
+  legs.position.y = 6.5;
+  g.add(torso, head, cap, legs);
+  return g;
 }
 
-export function wantedStars(police) {
-  return Math.ceil(police.wanted - 0.001);
+function makeHeliMesh() {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(40, 14, 20),
+    new THREE.MeshStandardMaterial({ color: 0x1a2a3a, roughness: 0.5, metalness: 0.4 })
+  );
+  body.position.y = 0;
+  body.castShadow = true;
+  const tail = new THREE.Mesh(
+    new THREE.BoxGeometry(30, 6, 6),
+    new THREE.MeshStandardMaterial({ color: 0x1a2a3a, roughness: 0.5, metalness: 0.4 })
+  );
+  tail.position.set(-34, 2, 0);
+  const rotor = new THREE.Mesh(
+    new THREE.BoxGeometry(70, 1.5, 5),
+    new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 })
+  );
+  rotor.position.y = 10;
+  const spot = new THREE.Mesh(
+    new THREE.ConeGeometry(26, 130, 12, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
+  );
+  spot.geometry.rotateX(Math.PI);
+  spot.position.y = -72;
+  g.add(body, tail, rotor, spot);
+  g.userData.rotor = rotor;
+  return g;
 }
 
-export function addWanted(G, stars, reason) {
-  const pol = G.police;
-  pol.wanted = Math.min(5, pol.wanted + stars);
-  pol.sinceCrime = 0;
-  if (reason) G.hud.flash(G, reason);
-  ensureResponse(G);
-}
-
-function desiredCruisers(w) {
-  if (w < 1) return 0;
-  if (w < 2) return 1;
-  if (w < 4) return 2;
-  return 3;
-}
-
-function desiredFoot(w) {
-  if (w < 2) return 0;
-  return Math.min(4, Math.floor(w));
-}
-
-// Spawn a cruiser on a road near the player, just out of clear sight.
-function spawnCruiser(G) {
-  const p = G.player;
-  const world = G.world;
-  for (let tries = 0; tries < 12; tries++) {
-    const horizontal = G.rng.chance(0.5);
-    const road = G.rng.pick(world.centers);
-    const along = p.x + G.rng.range(-650, 650);
-    const x = horizontal ? along : road;
-    const y = horizontal ? road : p.y + G.rng.range(-650, 650);
-    const d = Math.hypot(x - p.x, y - p.y);
-    if (d < 320 || d > 800) continue;
-    if (!isRoad(world, x, y)) continue;
-    const car = spawnCopCar(G, x, y);
-    G.police.cruisers.push({ car });
-    return;
+export class PoliceSys {
+  constructor(scene, world, rng) {
+    this.scene = scene;
+    this.world = world;
+    this.rng = rng;
+    this.wanted = 0;
+    this.lastCrimeT = -100;
+    this.cops = [];
+    this.cruisers = [];
+    this.heli = null;
+    this.heliAngle = 0;
+    this.roadblock = null;
+    this.roadblockT = 0;
+    this.arrestT = 0;
+    this.ramCooldown = 0;
   }
-}
 
-function spawnFootCop(G) {
-  const p = G.player;
-  for (let tries = 0; tries < 10; tries++) {
-    const a = G.rng.range(0, Math.PI * 2);
-    const d = G.rng.range(380, 620);
-    const x = p.x + Math.cos(a) * d;
-    const y = p.y + Math.sin(a) * d;
-    if (x < 20 || y < 20 || x > CFG.citySize - 20 || y > CFG.citySize - 20) continue;
-    if (blockedCircle(G.world, x, y, 12)) continue;
-    G.police.cops.push({ x, y, hp: CFG.copHp, arrestT: 0, shootCd: 1 });
-    return;
+  addWanted(n, G) {
+    this.wanted = Math.min(5, this.wanted + n);
+    this.lastCrimeT = G.time;
   }
-}
 
-function ensureResponse(G) {
-  const pol = G.police;
-  const w = wantedStars(pol);
-  while (pol.cruisers.length < desiredCruisers(w)) spawnCruiser(G);
-  while (pol.cops.length < desiredFoot(w)) spawnFootCop(G);
-}
+  stars() { return Math.ceil(this.wanted - 0.001); }
 
-function lineBlocked(world, x0, y0, x1, y1) {
-  // Sample the segment; a building between the two points blocks the shot.
-  const steps = Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 24);
-  for (let i = 1; i < steps; i++) {
-    const t = i / steps;
-    const x = x0 + (x1 - x0) * t;
-    const y = y0 + (y1 - y0) * t;
-    for (const b of world.buildings) {
-      if (x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h) return true;
+  _spawnPointNear(player, minD, maxD) {
+    for (let tries = 0; tries < 12; tries++) {
+      const a = this.rng.range(0, Math.PI * 2);
+      const d = this.rng.range(minD, maxD);
+      const x = player.x + Math.cos(a) * d;
+      const y = player.y + Math.sin(a) * d;
+      if (x < 40 || x > 3400 || y < 40 || y > 3060) continue;
+      if (this.world._blocked(x, y, 20)) continue;
+      return { x, y };
     }
+    return { x: player.x + 300, y: player.y };
   }
-  return false;
-}
 
-export function updatePolice(G, dt) {
-  const pol = G.police;
-  const p = G.player;
-  pol.sinceCrime += dt;
-  // Heat cools off after a quiet spell; once it hits zero the police leave.
-  if (pol.wanted > 0 && pol.sinceCrime > CFG.wantedDecayDelay) {
-    pol.wanted = Math.max(0, pol.wanted - CFG.wantedDecayRate * dt);
+  spawnCop(G) {
+    const p = this._spawnPointNear(G.player, 260, 480);
+    const mesh = makeCopMesh();
+    mesh.position.set(p.x, 0, p.y);
+    this.scene.add(mesh);
+    this.cops.push({ x: p.x, y: p.y, angle: 0, hp: 40, mesh, shootT: 0 });
   }
-  const w = wantedStars(pol);
-  if (w === 0) {
-    // Stand down: units drive and walk away, then despawn.
-    for (const c of pol.cruisers) {
-      const car = c.car;
-      car.angle += 0.4 * dt;
-      car.x += Math.cos(car.angle) * 140 * dt;
-      car.y += Math.sin(car.angle) * 140 * dt;
-    }
-    for (const cop of pol.cops) {
-      const dx = cop.x - p.x;
-      const dy = cop.y - p.y;
-      const d = Math.hypot(dx, dy) || 1;
-      const nx = cop.x + (dx / d) * 120 * dt;
-      const ny = cop.y + (dy / d) * 120 * dt;
-      if (!blockedCircle(G.world, nx, ny, 12)) { cop.x = nx; cop.y = ny; }
-    }
-    pol.cruisers = pol.cruisers.filter((c) => Math.hypot(c.car.x - p.x, c.car.y - p.y) < 1500 && !c.car.wrecked);
-    pol.cops = pol.cops.filter((c) => Math.hypot(c.x - p.x, c.y - p.y) < 1200);
-    if (pol.sirenOn) { G.audio.stopSiren(); pol.sirenOn = false; }
-    return;
+
+  spawnCruiser(G) {
+    const p = this._spawnPointNear(G.player, 320, 520);
+    const c = G.vehicles.addCar('cop', p.x, p.y, 0, 0x1a1a22);
+    c.hp = 120;
+    this.cruisers.push(c);
+    return c;
   }
-  ensureResponse(G);
-  if (!pol.sirenOn && pol.cruisers.length > 0) { G.audio.startSiren(); pol.sirenOn = true; }
-  // Cruisers chase and ram.
-  for (const c of pol.cruisers) {
-    const car = c.car;
-    if (car.wrecked) continue;
-    const dx = p.x - car.x;
-    const dy = p.y - car.y;
-    const d = Math.hypot(dx, dy) || 1;
-    const want = Math.atan2(dy, dx);
-    let diff = want - car.angle;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    car.angle += Math.max(-2.8 * dt, Math.min(2.8 * dt, diff));
-    const targetSpeed = d > 120 ? 380 : 240;
-    car.speed += (targetSpeed - car.speed) * Math.min(1, 2 * dt);
-    const nx = car.x + Math.cos(car.angle) * car.speed * dt;
-    const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-    if (!blockedCircle(G.world, nx, ny, 16)) {
-      car.x = nx;
-      car.y = ny;
-    } else {
-      car.speed *= 0.5;
+
+  _makeRoadblock(G) {
+    const p = G.player;
+    // Block the road ahead of the player's heading.
+    const ahead = p.inCar ? p.inCar.angle : p.angle;
+    const bx = p.x + Math.cos(ahead) * 380;
+    const by = p.y + Math.sin(ahead) * 380;
+    const perp = ahead + Math.PI / 2;
+    const cars = [];
+    for (const off of [-46, 46]) {
+      const x = bx + Math.cos(perp) * off;
+      const y = by + Math.sin(perp) * off;
+      const car = G.vehicles.addCar('cop', x, y, perp, 0x1a1a22);
+      car.speed = 0;
+      cars.push(car);
     }
-    // Ram the player's car, or the player on foot.
-    if (d < 44) {
-      if (p.inCar) {
-        G.vehicles.damageCar(G, p.inCar, 14 * dt);
-        p.inCar.speed *= 0.9;
-        p.inCar.x += (dx / d) * 30 * dt;
-        p.inCar.y += (dy / d) * 30 * dt;
-      } else {
-        const push = moveCircle(G.world, p.x, p.y, (dx / d) * 90 * dt, (dy / d) * 90 * dt, CFG.playerRadius);
-        p.x = push.x;
-        p.y = push.y;
-        if (G.time - (c.lastHit || 0) > 0.8) {
-          c.lastHit = G.time;
-          G.playerHurt(12);
+    this.roadblock = { cars, x: bx, y: by };
+    this.roadblockT = 14;
+  }
+
+  update(dt, G) {
+    const player = G.player;
+    // Wanted decay after laying low.
+    if (G.time - this.lastCrimeT > CONFIG.wantedDecayDelay && this.wanted > 0) {
+      this.wanted = Math.max(0, this.wanted - CONFIG.wantedDecayRate * dt);
+    }
+    const w = this.wanted;
+    // Foot cops: 0 at wanted 0, up to 8.
+    const wantCops = w < 1 ? 0 : Math.min(8, 2 + Math.floor(w));
+    while (this.cops.length < wantCops) this.spawnCop(G);
+    while (this.cops.length > wantCops) {
+      const c = this.cops.pop();
+      this.scene.remove(c.mesh);
+    }
+    // Cruisers: 0 at wanted 0, up to 4.
+    const wantCruisers = w < 1 ? 0 : Math.min(4, Math.floor(w));
+    while (this.cruisers.length < wantCruisers) this.spawnCruiser(G);
+    while (this.cruisers.length > wantCruisers) {
+      const c = this.cruisers.pop();
+      this.scene.remove(c.mesh);
+      const i = G.vehicles.cars.indexOf(c);
+      if (i >= 0) G.vehicles.cars.splice(i, 1);
+    }
+    // Helicopter at wanted 4+.
+    if (w >= 4 && !this.heli) {
+      this.heli = makeHeliMesh();
+      this.scene.add(this.heli);
+      this.heliAngle = 0;
+    }
+    if (w < 3.5 && this.heli) {
+      this.scene.remove(this.heli);
+      this.heli = null;
+    }
+    if (this.heli) {
+      this.heliAngle += dt * 0.55;
+      const hx = player.x + Math.cos(this.heliAngle) * 130;
+      const hy = player.y + Math.sin(this.heliAngle) * 130;
+      this.heli.position.set(hx, 150, hy);
+      this.heli.rotation.y = -Math.atan2(player.y - hy, player.x - hx);
+      this.heli.userData.rotor.rotation.y += dt * 22;
+    }
+    // Roadblock at wanted 4+.
+    if (w >= 4) {
+      this.roadblockT -= dt;
+      const rb = this.roadblock;
+      const stale = rb && (Math.hypot(player.x - rb.x, player.y - rb.y) < 90 || rb.cars.some((c) => c.wrecked));
+      if ((!rb || stale || this.roadblockT <= 0) && this.roadblockT <= 0) {
+        if (rb) {
+          for (const c of rb.cars) {
+            const i = G.vehicles.cars.indexOf(c);
+            if (i >= 0 && !c.wrecked) { G.vehicles.cars.splice(i, 1); this.scene.remove(c.mesh); }
+          }
+        }
+        this._makeRoadblock(G);
+      }
+    } else if (this.roadblock) {
+      for (const c of this.roadblock.cars) {
+        const i = G.vehicles.cars.indexOf(c);
+        if (i >= 0 && !c.wrecked) { G.vehicles.cars.splice(i, 1); this.scene.remove(c.mesh); }
+      }
+      this.roadblock = null;
+    }
+    // Foot cop AI: chase, arrest on foot, shoot the car.
+    this.ramCooldown -= dt;
+    let nearestCop = Infinity;
+    for (const c of this.cops) {
+      const dx = player.x - c.x, dy = player.y - c.y;
+      const d = Math.hypot(dx, dy);
+      nearestCop = Math.min(nearestCop, d);
+      const speed = player.inCar ? 210 : 195;
+      const step = Math.min(d, speed * dt);
+      const np = this.world.moveCircle(c.x, c.y, (dx / (d || 1)) * step, (dy / (d || 1)) * step, 12);
+      c.x = np.x; c.y = np.y;
+      c.angle = Math.atan2(dy, dx);
+      c.mesh.position.set(c.x, 0, c.y);
+      c.mesh.rotation.y = -c.angle;
+      if (player.inCar && d < 320) {
+        c.shootT -= dt;
+        if (c.shootT <= 0) {
+          c.shootT = 1.1;
+          player.inCar.hp = Math.max(0, player.inCar.hp - 2);
+          if (player.inCar.hp <= 0) player.inCar.wrecked = true;
         }
       }
     }
-  }
-  pol.cruisers = pol.cruisers.filter((c) => !c.car.wrecked);
-  // Foot officers close in to arrest; they shoot at the car, not the man.
-  // A cop wedged on a building slides sideways until the way clears.
-  const chaseStep = (cop, speed) => {
-    if (cop.stuckT === undefined) { cop.stuckT = 0; cop.slideT = 0; cop.slideDir = 1; cop.lastD = Infinity; }
-    const dx = p.x - cop.x;
-    const dy = p.y - cop.y;
-    const d = Math.hypot(dx, dy) || 1;
-    if (d < cop.lastD - 2) { cop.lastD = d; cop.stuckT = 0; }
-    else cop.stuckT += dt;
-    if (cop.stuckT > 1.2 && cop.slideT <= 0) {
-      cop.slideT = 1.0;
-      cop.slideDir = G.rng.chance(0.5) ? 1 : -1;
-      cop.stuckT = 0;
-    }
-    let mx = (dx / d) * speed * dt;
-    let my = (dy / d) * speed * dt;
-    if (cop.slideT > 0) {
-      cop.slideT -= dt;
-      mx = (-dy / d) * cop.slideDir * speed * dt;
-      my = (dx / d) * cop.slideDir * speed * dt;
-    }
-    if (!blockedCircle(G.world, cop.x + mx, cop.y + my, 12)) { cop.x += mx; cop.y += my; }
-    return d;
-  };
-  for (const cop of pol.cops) {
-    const dx = p.x - cop.x;
-    const dy = p.y - cop.y;
-    const d = Math.hypot(dx, dy) || 1;
-    if (p.inCar) {
-      // Hold a firing line and shoot the car — never through a building.
-      cop.shootCd -= dt;
-      if (d > 240) {
-        chaseStep(cop, CFG.copSpeed);
-      } else if (cop.shootCd <= 0 && !lineBlocked(G.world, cop.x, cop.y, p.x, p.y)) {
-        cop.shootCd = 1.1;
-        const a = Math.atan2(dy, dx) + G.rng.range(-0.06, 0.06);
-        G.combat.fireBullet(G, cop.x, cop.y, a, 460, 9, 'cop');
-        G.audio.enemyShoot();
-      }
-      cop.arrestT = 0;
-    } else if (d < 30) {
-      cop.arrestT += dt;
-      if (cop.arrestT >= 2.5) {
-        busted(G, 'arrested');
+    // Arrest: a cop within 26 of Rex on foot for 1.2s.
+    if (!player.inCar && nearestCop < 26) {
+      this.arrestT += dt;
+      if (this.arrestT > 1.2) {
+        this.arrestT = 0;
+        G.onBusted();
         return;
       }
     } else {
-      cop.arrestT = Math.max(0, cop.arrestT - dt);
-      chaseStep(cop, CFG.copSpeed);
+      this.arrestT = 0;
+    }
+    // Cruiser AI: chase and ram.
+    for (const c of this.cruisers) {
+      if (c.wrecked) continue;
+      const dx = player.x - c.x, dy = player.y - c.y;
+      const d = Math.hypot(dx, dy);
+      const desired = Math.atan2(dy, dx);
+      let diff = desired - c.angle;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const steer = Math.max(-1, Math.min(1, diff * 2.4));
+      c.driveStep(dt, this.world, 1, steer);
+      if (d < 52 && this.ramCooldown <= 0) {
+        this.ramCooldown = 1.1;
+        if (player.inCar) {
+          player.inCar.hp = Math.max(0, player.inCar.hp - 4);
+          if (player.inCar.hp <= 0) player.inCar.wrecked = true;
+        } else {
+          player.takeDamage(8);
+          if (player.hp <= 0) G.onBusted();
+        }
+        G.audio.hit();
+      }
+    }
+    // Player wrecked car while wanted: force him out on foot.
+    if (player.inCar && player.inCar.wrecked) {
+      player.exitCar(this.world);
     }
   }
-  pol.cops = pol.cops.filter((c) => c.hp > 0);
-}
-
-export function busted(G, reason) {
-  if (G.state !== 'playing') return;
-  G.state = 'busted';
-  G.bustedReason = reason;
-  const lost = Math.floor(G.player.money * CFG.bustedLoseCash);
-  G.player.money -= lost;
-  G.bustedLost = lost;
-  G.police.wanted = 0;
-  G.police.cops = [];
-  for (const c of G.police.cruisers) {
-    const i = G.cars.indexOf(c.car);
-    if (i >= 0) G.cars.splice(i, 1);
-  }
-  G.police.cruisers = [];
-  G.audio.stopSiren();
-  G.police.sirenOn = false;
-  G.audio.fail();
-  // The crew drags Rex back to Mara's garage; the mission step restarts.
-  G.player.hp = CFG.playerHp;
-  G.player.dead = false;
-  G.player.arrestT = 0;
-  if (G.player.inCar) G.player.inCar = null;
-  G.player.x = G.world.spots.garage.x;
-  G.player.y = G.world.spots.garage.y;
-  G.missions.onBusted(G);
-  G.save();
 }
