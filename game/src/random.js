@@ -1,84 +1,48 @@
-// Neon Bay — a small deterministic random-number source.
-// The city, the traffic and the screenshot scenes all draw from one
-// seeded generator, so a fixed seed rebuilds the same Neon Bay every time.
+// Neon Bay — the seeded random source. The city, the traffic and the
+// screenshot scenes all draw from this, so the same seed builds the same town.
 export function mulberry32(seed) {
-  let state = seed >>> 0;
-  return function nextRandom() {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  let a = seed >>> 0;
+  return function next() {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
 
-export function makeRng(seed) {
-  const next = mulberry32(seed);
-  return {
-    next,
-    range(min, max) {
-      return min + next() * (max - min);
-    },
-    int(min, max) {
-      return Math.floor(min + next() * (max - min + 1));
-    },
-    pick(list) {
-      return list[Math.floor(next() * list.length)];
-    },
-    chance(p) {
-      return next() < p;
-    },
-  };
-}
-
-export function clamp(value, min, max) {
-  return value < min ? min : value > max ? max : value;
-}
-
-export function lerp(a, b, t) {
-  return a + (b - a) * t;
-}
-
-// Approximately normal value around `mean` with spread `spread`, from two
-// uniform draws, so crowds vary naturally instead of uniformly.
-export function gauss(rng, mean, spread) {
-  const u = rng.next() + rng.next() - 1;
-  return mean + u * spread;
-}
-
-// Shuffle a copy of a list in place order, so a street deals its colours
-// out instead of rolling the same one twice in a row.
-export function shuffle(rng, list) {
-  const out = list.slice();
-  for (let i = out.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(rng.next() * (i + 1));
-    const tmp = out[i];
-    out[i] = out[j];
-    out[j] = tmp;
+export class RNG {
+  constructor(seed) {
+    this.next = mulberry32(seed);
   }
-  return out;
-}
-
-export function distance(x1, y1, x2, y2) {
-  return Math.hypot(x2 - x1, y2 - y1);
-}
-
-// A uniform point inside a disc of radius r around (cx, cy): for
-// scattering a crew over a patch of ground instead of fixed points.
-export function randomPointInCircle(rng, cx, cy, r) {
-  const a = rng.range(0, Math.PI * 2);
-  const d = Math.sqrt(rng.next()) * r;
-  return { x: cx + Math.cos(a) * d, y: cy + Math.sin(a) * d };
-}
-
-export function angleTo(x1, y1, x2, y2) {
-  return Math.atan2(y2 - y1, x2 - x1);
-}
-
-// Shortest signed turn from angle a toward angle b, in radians.
-export function angleDelta(a, b) {
-  let d = (b - a) % (Math.PI * 2);
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d < -Math.PI) d += Math.PI * 2;
-  return d;
+  // Float in [0, 1).
+  f() {
+    return this.next();
+  }
+  // Float in [a, b).
+  range(a, b) {
+    return a + (b - a) * this.next();
+  }
+  // Integer in [a, b] inclusive.
+  int(a, b) {
+    return a + Math.floor(this.next() * (b - a + 1));
+  }
+  // One element of an array.
+  pick(arr) {
+    return arr[Math.floor(this.next() * arr.length)];
+  }
+  // True with probability p.
+  chance(p) {
+    return this.next() < p;
+  }
+  // Shuffle a copy of an array in place and return it.
+  shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(this.next() * (i + 1));
+      const t = arr[i];
+      arr[i] = arr[j];
+      arr[j] = t;
+    }
+    return arr;
+  }
 }

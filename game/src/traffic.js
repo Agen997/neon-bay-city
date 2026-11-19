@@ -1,131 +1,143 @@
-// Neon Bay — pedestrians: the crowds that make the city feel alive.
-// They stroll the sidewalks, cross at junctions, and run when a shot
-// is fired or a wanted chase rolls past them.
-import { CFG, PED_COLORS } from './config.js';
-import { distance, gauss } from './random.js';
-import { isOnRoad, isWater, nearestRoadCenter, randomStreetPoint, WATER_X } from './world.js';
+// Neon Bay — pedestrians. Crowds stroll the sidewalks and run when shots
+// are fired; a stolen car's driver flees on foot the same way.
+import { CFG } from './config.js';
+import { blockedCircle } from './world.js';
 
-export function spawnPedestrian(game, x, y) {
-  const rng = game.rng;
-  const point = x === undefined ? randomStreetPoint(rng) : { x, y };
+const SHIRTS = ['#e8e8e8', '#d4a03a', '#3a9e80', '#c96f4a', '#7a4ac9', '#4a7ec9', '#e87a2a'];
+
+export function createPedestrians(world, rng) {
+  const peds = [];
+  for (let i = 0; i < CFG.pedestrians; i++) {
+    peds.push(spawnPed(world, rng));
+  }
+  return peds;
+}
+
+function spawnPed(world, rng) {
+  const horizontal = rng.chance(0.5);
+  const road = rng.pick(world.centers);
+  const along = rng.range(60, CFG.citySize - 60);
+  const side = rng.chance(0.5) ? 1 : -1;
+  const off = side * 42;
   return {
-    x: point.x,
-    y: point.y,
-    angle: rng.range(0, Math.PI * 2),
-    speed: Math.max(36, Math.min(86, gauss(rng, 60, 14))),
-    color: rng.pick(PED_COLORS),
-    skin: rng.pick(['#f2c89b', '#c98d5e', '#8a5a3b', '#f7d7b0']),
-    walking: true,
-    fleeing: false,
+    x: horizontal ? along : road + off,
+    y: horizontal ? road + off : along,
+    angle: 0,
+    speed: rng.range(38, 62),
+    axis: horizontal ? 'x' : 'y',
+    dir: rng.chance(0.5) ? 1 : -1,
+    line: road + off,
+    shirt: rng.pick(SHIRTS),
+    flee: false,
+    fleeT: 0,
+    fleeX: 0,
+    fleeY: 0,
     down: false,
-    waiting: false,
-    waitTimer: 0,
-    // Sidewalk target: the edge of the nearest road.
-    targetX: point.x,
-    targetY: point.y,
-    retargetTimer: rng.range(2, 8),
+    downT: 0,
   };
 }
 
-export function spawnPedestrians(game, count) {
-  for (let i = 0; i < count; i += 1) {
-    game.peds.push(spawnPedestrian(game));
+export function fleeDriver(G, x, y) {
+  const ped = spawnPed(G.world, G.rng);
+  ped.x = x;
+  ped.y = y;
+  ped.flee = true;
+  ped.fleeT = 3;
+  ped.fleeX = x;
+  ped.fleeY = y;
+  G.traffic.peds.push(ped);
+}
+
+export function scarePeds(G, x, y, radius) {
+  for (const ped of G.traffic.peds) {
+    if (ped.down) continue;
+    const d = Math.hypot(ped.x - x, ped.y - y);
+    if (d < radius) {
+      ped.flee = true;
+      ped.fleeT = 2.5;
+      ped.fleeX = x;
+      ped.fleeY = y;
+    }
   }
 }
 
-function pickSidewalkTarget(game, ped) {
-  const rng = game.rng;
-  // Walk to a point just off a road: the sidewalk band.
-  const centers = [192, 448, 704, 960, 1216, 1472, 1728, 1984, 2240, 2496, 2752];
-  const line = rng.pick(centers);
-  const along = rng.range(160, 3000);
-  const side = rng.chance(0.5) ? 48 : -48;
-  if (rng.chance(0.5)) {
-    ped.targetX = line + side;
-    ped.targetY = along;
-  } else {
-    ped.targetX = along;
-    ped.targetY = line + side;
-  }
-  // Keep the target on dry land: a sidewalk point past the bay's edge
-  // would leave the pedestrian pressing against the water forever.
-  ped.targetX = Math.min(ped.targetX, WATER_X - 60);
-  ped.targetX = Math.max(120, ped.targetX);
-  ped.targetY = Math.min(Math.max(120, ped.targetY), 3080);
-}
-
-export function updatePedestrian(game, ped, dt) {
-  if (ped.down) return;
-  const player = game.player;
-  const playerPos = player.car ? { x: player.car.x, y: player.car.y } : player;
-  const danger = game.wanted > 0 || game.recentShotTimer > 0;
-  const nearPlayer = distance(ped.x, ped.y, playerPos.x, playerPos.y);
-  ped.fleeing = danger && nearPlayer < 420;
-  ped.retargetTimer -= dt;
-  if (ped.fleeing) {
-    // Run away from the player.
-    const away = Math.atan2(ped.y - playerPos.y, ped.x - playerPos.x);
-    ped.angle = away;
-    ped.speed = 190;
-    ped.waiting = false;
-  } else if (ped.retargetTimer <= 0 || distance(ped.x, ped.y, ped.targetX, ped.targetY) < 14) {
-    // Reached the corner: sometimes stop and wait there a while, like a
-    // person deciding where to go next, instead of marching on at once.
-    if (game.rng.chance(0.3)) {
-      ped.waiting = true;
-      ped.waitTimer = game.rng.range(1.5, 4);
-      ped.retargetTimer = game.rng.range(4, 10);
+export function updateTraffic(G, dt) {
+  const world = G.world;
+  for (const ped of G.traffic.peds) {
+    if (ped.down) {
+      ped.downT += dt;
+      if (ped.downT > 6) {
+        // Gets up and walks away, shaken.
+        ped.down = false;
+        ped.downT = 0;
+        ped.flee = true;
+        ped.fleeT = 2;
+        ped.fleeX = G.player.x;
+        ped.fleeY = G.player.y;
+      }
+      continue;
+    }
+    if (ped.flee) {
+      ped.fleeT -= dt;
+      if (ped.fleeT <= 0) {
+        ped.flee = false;
+      } else {
+        const dx = ped.x - ped.fleeX;
+        const dy = ped.y - ped.fleeY;
+        const d = Math.hypot(dx, dy) || 1;
+        const sp = ped.speed * 2.4;
+        const nx = ped.x + (dx / d) * sp * dt;
+        const ny = ped.y + (dy / d) * sp * dt;
+        if (!blockedCircle(world, nx, ny, 10)) {
+          ped.x = nx;
+          ped.y = ny;
+        }
+        ped.angle = Math.atan2(dy, dx);
+        continue;
+      }
+    }
+    // Stroll along the sidewalk; turn at a junction sometimes.
+    const step = ped.dir * ped.speed * dt;
+    let nx = ped.x;
+    let ny = ped.y;
+    if (ped.axis === 'x') {
+      nx += step;
+      ny = ped.line;
     } else {
-      pickSidewalkTarget(game, ped);
-      ped.retargetTimer = game.rng.range(4, 10);
-      ped.speed = Math.max(36, Math.min(86, gauss(game.rng, 60, 14)));
+      ny += step;
+      nx = ped.line;
     }
-  }
-  if (ped.waiting) {
-    ped.waitTimer -= dt;
-    if (ped.waitTimer <= 0) {
-      ped.waiting = false;
-      pickSidewalkTarget(game, ped);
-      ped.retargetTimer = game.rng.range(4, 10);
-      ped.speed = Math.max(36, Math.min(86, gauss(game.rng, 60, 14)));
-    }
-    return;
-  }
-  if (!ped.fleeing) {
-    ped.angle = Math.atan2(ped.targetY - ped.y, ped.targetX - ped.x);
-  }
-  const nx = ped.x + Math.cos(ped.angle) * ped.speed * dt;
-  const ny = ped.y + Math.sin(ped.angle) * ped.speed * dt;
-  // Pedestrians cross roads freely; only the bay is off limits.
-  if (!isWater(nx, ny)) {
-    ped.x = nx;
-    ped.y = ny;
-  }
-  // Keep pedestrians inside the city and out of buildings.
-  let blocked = false;
-  for (const b of game.world.buildings) {
-    if (ped.x > b.x - 6 && ped.x < b.x + b.w + 6 && ped.y > b.y - 6 && ped.y < b.y + b.h + 6) {
-      blocked = true;
+    for (const c of world.centers) {
+      const crossed = ped.axis === 'x'
+        ? (ped.dir > 0 ? ped.x < c && nx >= c : ped.x > c && nx <= c)
+        : (ped.dir > 0 ? ped.y < c && ny >= c : ped.y > c && ny <= c);
+      if (!crossed) continue;
+      if (G.rng.chance(0.3)) {
+        const side = G.rng.chance(0.5) ? 42 : -42;
+        if (ped.axis === 'x') {
+          ped.axis = 'y';
+          ped.line = c + side;
+          ped.dir = G.rng.chance(0.5) ? 1 : -1;
+          nx = ped.line;
+        } else {
+          ped.axis = 'x';
+          ped.line = c + side;
+          ped.dir = G.rng.chance(0.5) ? 1 : -1;
+          ny = ped.line;
+        }
+      }
       break;
     }
-  }
-  if (blocked) {
-    ped.retargetTimer = 0;
-  }
-}
-
-export function updatePedestrians(game, dt) {
-  for (const ped of game.peds) updatePedestrian(game, ped, dt);
-  // Thin the crowd back to the target size, or top it up.
-  const target = game.shotMode ? 26 : CFG.pedCount;
-  game.peds = game.peds.filter((ped) => !ped.down || game.rng.chance(0.995));
-  while (game.peds.length < target) {
-    const ped = spawnPedestrian(game);
-    // Spawn newcomers near the player so the streets never feel empty.
-    const p = game.player;
-    ped.x = p.x + game.rng.range(-700, 700);
-    ped.y = p.y + game.rng.range(-700, 700);
-    if (ped.x < 120 || ped.y < 120 || ped.x > 2880 || ped.y > 3080) continue;
-    game.peds.push(ped);
+    if (nx < 30 || nx > CFG.citySize - 30) {
+      ped.dir *= -1;
+      nx = Math.max(30, Math.min(CFG.citySize - 30, nx));
+    }
+    if (ny < 30 || ny > CFG.citySize - 30) {
+      ped.dir *= -1;
+      ny = Math.max(30, Math.min(CFG.citySize - 30, ny));
+    }
+    ped.x = nx;
+    ped.y = ny;
+    ped.angle = ped.axis === 'x' ? (ped.dir > 0 ? 0 : Math.PI) : (ped.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
   }
 }

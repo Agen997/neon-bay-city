@@ -1,112 +1,109 @@
-// Neon Bay — tuning constants and palette for the whole game.
-// Every number that shapes how the city feels lives here, so balancing
-// the game means editing this file, not hunting through the systems.
+// Neon Bay — tuning and palette. Every number the game balances on lives here,
+// so a tweak never means hunting through the systems that use it.
 export const CFG = {
-  worldSize: 3200,
-  blockSize: 256,
-  roadWidth: 64,
-  // Player on foot.
-  walkSpeed: 210,
-  runSpeed: 330,
+  // View and world geometry.
+  viewW: 1280,
+  viewH: 720,
+  roadW: 64,
+  block: 240,
+  pitch: 304, // roadW + block
+  roads: 11,
+  // City spans 0..3104 on both axes; the bay opens to the east of it.
+  citySize: 3104,
+  beachX0: 3104,
+  beachX1: 3440,
+  waterX0: 3440,
+  worldW: 4400,
+  worldH: 3104,
+  // The lighthouse beach (the King fight's leash) and the pier.
+  beach: { x0: 3120, y0: 900, x1: 3420, y1: 2200 },
+  lighthouse: { x: 3580, y: 1552 },
+  pier: { x0: 3104, y0: 2380, x1: 3600, y1: 2420 },
+  // Key addresses, picked on the road grid.
+  garage: { x: 336, y: 1552 }, // Mara's garage on Harbor Row
+  market: { x: 1552, y: 640 }, // night market
+  marina: { x: 2768, y: 2768 }, // marina, south-east
+  vault: { x: 1552, y: 1552 }, // Bay Trust, downtown
+  // Player.
+  walkSpeed: 170,
+  runSpeed: 260,
+  playerHp: 100,
   playerRadius: 13,
-  playerMaxHealth: 100,
-  // Driving.
+  // Cars.
   carAccel: 520,
-  carBrake: 900,
-  carMaxSpeed: 460,
-  carReverseSpeed: 170,
+  carBrake: 700,
+  carMaxSpeed: 430,
+  carReverseSpeed: 150,
   carTurn: 2.6,
-  carRadius: 20,
-  trafficSpeed: 130,
-  policeSpeed: 430,
+  carRadius: 16,
+  trafficSpeed: 120,
   // Combat.
   pistolDamage: 34,
-  pistolRange: 420,
-  pistolCooldown: 0.28,
-  meleeDamage: 22,
-  meleeRange: 46,
+  pistolCooldown: 0.22,
+  pistolRange: 520,
+  meleeDamage: 45,
+  meleeRange: 56,
+  meleeArc: 1.1,
   meleeCooldown: 0.45,
-  bulletSpeed: 900,
-  // A thug shot down sometimes drops a health pack.
-  thugHealthDropChance: 0.25,
-  healthPickupHeal: 30,
-  // NBPD foot officers: how often a shot lands and how hard it hits.
-  officerHitChance: 0.35,
-  officerDamage: 5,
-  // A police cruiser ramming the player's car, damage per second of contact.
-  // The ram also has a cooldown (see police.js): without one a faster
-  // cruiser stays glued to the player's car and the damage never stops.
-  policeRamDps: 26,
-  // Seconds a cruiser backs off after ramming before it can ram again.
-  policeRamCooldown: 1.5,
-  // The player's ride takes more punishment than a traffic car: a parked
-  // car should not be wrecked by two seconds of ramming while its driver
-  // reads a mission briefing.
-  playerCarHealth: 160,
-  // The King fight at Lighthouse Point: the lighthouse stands in the
-  // bay, so the goto circle must reach the whole beach strip (the dry
-  // ground east of the last road), not just the water's edge. The crew
-  // is leashed to a rectangle of sand (see missions.js), so the fight
-  // stays on the beach.
-  lighthouseGotoRadius: 220,
-  // Crowd and traffic density.
-  pedCount: 44,
-  trafficTarget: 12,
-  // Engine sound: at most one blip per interval, not one per frame.
-  engineSoundMs: 90,
-  // Wanted system.
-  wantedMax: 5,
-  wantedDecaySeconds: 26,
-  // Camera and screen.
-  viewWidth: 1280,
-  viewHeight: 720,
-  cameraZoom: 1.0,
-  minimapSize: 168,
-  // Economy.
-  startCash: 120,
-  missionReward: [400, 650, 900, 1400, 2500],
+  thugHp: 70,
+  thugSpeed: 150,
+  thugDamage: 12,
+  kingHp: 420,
+  kingSpeed: 120,
+  copHp: 60,
+  copSpeed: 165,
+  // Wanted.
+  wantedDecayDelay: 9, // seconds of no crime before heat starts cooling
+  wantedDecayRate: 0.22, // stars per second once cooling
+  bustedLoseCash: 0.15, // fraction of cash lost when busted
+  // Missions.
+  missionPay: [200, 400, 600, 900, 1500],
+  vaultHoldSeconds: 45,
+  deliverySeconds: 75,
+  // World population.
+  parkedCars: 26,
+  trafficCars: 14,
+  pedestrians: 42,
+  seed: 20261119,
 };
 
 export const PALETTE = {
-  grass: '#3f9e4d',
-  grassDark: '#35873f',
-  park: '#57b368',
-  road: '#2e3138',
-  roadEdge: '#4a4f5a',
-  lane: '#e8d44d',
-  sidewalk: '#9aa0ab',
-  buildingRoof: ['#c96f4a', '#4a7fb5', '#b5a34a', '#7a5fb5', '#4ab5a0', '#b54a6e'],
-  buildingEdge: '#23252b',
-  water: '#1f7fb5',
-  waterDeep: '#16608c',
-  sand: '#e8d9a0',
-  tree: '#2e7d32',
-  treeLight: '#4caf50',
-  hudPanel: 'rgba(12, 16, 28, 0.78)',
-  hudAccent: '#ffcf3f',
-  neonPink: '#ff4da6',
-  neonCyan: '#29e6ff',
-  policeBlue: '#2f6bff',
-  policeRed: '#ff3b30',
+  grass: '#3f7d4a',
+  parkGrass: '#4c9153',
+  sand: '#e0c98f',
+  sandWet: '#cbb27a',
+  water: '#1d6f8e',
+  waterDeep: '#155a75',
+  road: '#33363d',
+  roadLine: '#e8d44d',
+  sidewalk: '#8a8d94',
+  crosswalk: '#d8d8d2',
+  plaza: '#9a938a',
+  building: ['#c96f4a', '#4a7ec9', '#c9a44a', '#7a4ac9', '#4ac9a0', '#c94a6e', '#8a6f4a', '#5a8a4a'],
+  roof: ['#a8553a', '#3a639e', '#a8843a', '#5f3a9e', '#3a9e80', '#a83a58'],
+  glass: '#bfe3ea',
+  pierWood: '#8a6a42',
+  pierPost: '#5f4630',
+  lighthouse: '#e8e4da',
+  lighthouseTop: '#c94a4a',
+  car: ['#d43a3a', '#3a7bd4', '#e8c832', '#3ad46a', '#c9c9c9', '#7a3ad4', '#e87a2a', '#2ad4c9'],
+  player: '#2a9df4',
+  playerJacket: '#1f6fb8',
+  thug: '#8a2a3a',
+  king: '#1a1a22',
+  cop: '#1f3a8a',
+  copCar: '#e8e8e8',
+  health: '#39d353',
+  cash: '#e8d44d',
+  bullet: '#ffe9a8',
+  muzzle: '#ffcf3a',
 };
 
-export const CAR_COLORS = [
-  '#e84a4a', '#4a90e8', '#f2c14e', '#7ee081', '#c77dff', '#ff8c42',
-  '#e8e8e8', '#3a3f4a', '#2ec4b6', '#ff6b9d',
-];
-
-export const PED_COLORS = [
-  '#f2c14e', '#7ee081', '#ff8c42', '#c77dff', '#4a90e8', '#e84a4a', '#e8e8e8',
-];
-
-// Key bindings, shown on the title screen and the pause menu.
-export const CONTROLS = [
-  ['W A S D', 'Move / drive'],
-  ['Mouse', 'Aim'],
-  ['Left click', 'Shoot pistol / punch'],
-  ['E', 'Enter / exit car (steal it)'],
-  ['Shift', 'Run'],
-  ['Space', 'Melee swing'],
-  ['P', 'Pause'],
-  ['M', 'Mute sound'],
-];
+export const NAMES = {
+  player: 'Rex Marlowe',
+  fixer: 'Mara Voss',
+  gang: 'Tide King',
+  boss: 'King',
+  police: 'NBPD',
+  city: 'Neon Bay',
+};

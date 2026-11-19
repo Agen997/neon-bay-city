@@ -1,104 +1,130 @@
-// Neon Bay — all sound is synthesized with WebAudio, no audio files.
-// Short oscillator blips for shots, pickups and menus, a two-tone siren
-// for police, and a soft bass pulse for the title music. Silent until the
-// player interacts, and fully muted with M.
-export function createSoundBank() {
-  const bank = {
-    ctx: null,
-    muted: false,
-    sirenTimer: 0,
-    musicTimer: 0,
-    engineTimer: 0,
-    ensure() {
-      if (bank.ctx) {
-        // A context starts suspended until the browser allows sound; a
-        // start that never resumes it plays the whole game silent.
-        if (bank.ctx.state === 'suspended') bank.ctx.resume().catch(() => {});
-        return;
-      }
-      try {
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        bank.ctx = new AudioContext();
-        if (bank.ctx.state === 'suspended') bank.ctx.resume().catch(() => {});
-      } catch {
-        bank.ctx = null;
-      }
-    },
-    tone(freq, duration, type, volume, slideTo) {
-      if (bank.muted || !bank.ctx) return;
-      try {
-        const t0 = bank.ctx.currentTime;
-        const osc = bank.ctx.createOscillator();
-        const gain = bank.ctx.createGain();
-        osc.type = type || 'square';
-        osc.frequency.setValueAtTime(freq, t0);
-        if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t0 + duration);
-        gain.gain.setValueAtTime(volume || 0.08, t0);
-        gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
-        osc.connect(gain);
-        gain.connect(bank.ctx.destination);
-        osc.start(t0);
-        osc.stop(t0 + duration + 0.02);
-      } catch {
-        // Sound is garnish: a failure here must never break the game.
-      }
-    },
-    shoot() {
-      bank.tone(880, 0.09, 'square', 0.06, 120);
-    },
-    punch() {
-      bank.tone(160, 0.1, 'sine', 0.12, 60);
-    },
-    hit() {
-      bank.tone(220, 0.12, 'sawtooth', 0.08, 90);
-    },
-    pickup() {
-      bank.tone(660, 0.09, 'sine', 0.09);
-      setTimeout(() => bank.tone(990, 0.12, 'sine', 0.09), 70);
-    },
-    cash() {
-      bank.tone(1180, 0.08, 'triangle', 0.1);
-      setTimeout(() => bank.tone(1560, 0.14, 'triangle', 0.1), 80);
-    },
-    missionDone() {
-      [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => bank.tone(f, 0.16, 'triangle', 0.1), i * 110));
-    },
-    busted() {
-      [330, 262, 196].forEach((f, i) => setTimeout(() => bank.tone(f, 0.22, 'sawtooth', 0.08), i * 160));
-    },
-    // The King walks in: a low two-note menace when his crew spawns.
-    boss() {
-      bank.tone(110, 0.35, 'sawtooth', 0.1, 82);
-      setTimeout(() => bank.tone(82, 0.5, 'sawtooth', 0.1, 55), 320);
-    },
-    engine(running) {
-      if (!running || bank.muted || !bank.ctx) return;
-      // One blip per interval, not one per frame: at 60 fps the unthrottled
-      // version spawns sixty oscillators a second while driving.
-      const now = bank.ctx.currentTime;
-      if (now - bank.engineTimer < 0.09) return;
-      bank.engineTimer = now;
-      bank.tone(70, 0.08, 'sawtooth', 0.02, 110);
-    },
-    // Called every frame while police are near: a distant two-tone wail.
-    updateSiren(dt, policeNear) {
-      if (!bank.ctx || bank.muted) return;
-      bank.sirenTimer -= dt;
-      if (policeNear && bank.sirenTimer <= 0) {
-        bank.sirenTimer = 0.9;
-        bank.tone(700, 0.42, 'sine', 0.035, 950);
-        setTimeout(() => bank.tone(950, 0.42, 'sine', 0.03, 700), 430);
-      }
-    },
-    // Soft bass pulse on the title screen.
-    updateTitleMusic(dt, onTitle) {
-      if (!bank.ctx || bank.muted) return;
-      bank.musicTimer -= dt;
-      if (onTitle && bank.musicTimer <= 0) {
-        bank.musicTimer = 0.55;
-        bank.tone(98, 0.4, 'triangle', 0.04, 98);
-      }
-    },
-  };
-  return bank;
+// Neon Bay — every sound is synthesized live with WebAudio. No audio files,
+// no network: oscillators and filtered noise, built at the moment they play.
+export class AudioSys {
+  constructor() {
+    this.ctx = null;
+    this.muted = false;
+    this._sirenNodes = null;
+    this._bassTimer = 0;
+  }
+  // Created on the first user gesture; safe to call before any sound plays.
+  ensure() {
+    if (this.ctx) {
+      if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+      return;
+    }
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      this.ctx = new AC();
+    } catch (err) {
+      this.ctx = null;
+    }
+  }
+  toggleMute() {
+    this.muted = !this.muted;
+    if (this.muted) this.stopSiren();
+    return this.muted;
+  }
+  _tone(freq, dur, type, vol, slideTo) {
+    if (!this.ctx || this.muted) return;
+    const t0 = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (slideTo !== undefined) osc.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t0 + dur);
+    gain.gain.setValueAtTime(vol, t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(gain).connect(this.ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+  }
+  _noise(dur, vol, filterFreq) {
+    if (!this.ctx || this.muted) return;
+    const t0 = this.ctx.currentTime;
+    const len = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = filterFreq;
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(vol, t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(filter).connect(gain).connect(this.ctx.destination);
+    src.start(t0);
+  }
+  shoot() {
+    this._noise(0.12, 0.5, 2400);
+    this._tone(190, 0.09, 'square', 0.16, 60);
+  }
+  enemyShoot() {
+    this._noise(0.1, 0.3, 1600);
+    this._tone(140, 0.08, 'square', 0.1, 55);
+  }
+  melee() {
+    this._noise(0.14, 0.35, 900);
+  }
+  hit() {
+    this._tone(120, 0.1, 'sawtooth', 0.2, 70);
+  }
+  pickup() {
+    this._tone(660, 0.09, 'sine', 0.25);
+    setTimeout(() => this._tone(990, 0.12, 'sine', 0.25), 70);
+  }
+  coin() {
+    this._tone(880, 0.08, 'triangle', 0.25);
+    setTimeout(() => this._tone(1320, 0.14, 'triangle', 0.25), 60);
+  }
+  jingle() {
+    const notes = [523, 659, 784, 1047];
+    notes.forEach((f, i) => setTimeout(() => this._tone(f, 0.16, 'triangle', 0.28), i * 95));
+  }
+  fail() {
+    this._tone(220, 0.25, 'sawtooth', 0.2, 110);
+    setTimeout(() => this._tone(165, 0.35, 'sawtooth', 0.2, 82), 180);
+  }
+  carStart() {
+    this._tone(90, 0.3, 'sawtooth', 0.18, 220);
+  }
+  crash() {
+    this._noise(0.25, 0.5, 700);
+    this._tone(70, 0.2, 'sine', 0.3, 40);
+  }
+  // A two-tone siren that loops while at least one cruiser is near.
+  startSiren() {
+    if (!this.ctx || this.muted || this._sirenNodes) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    const lfo = this.ctx.createOscillator();
+    const lfoGain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 750;
+    lfo.type = 'sine';
+    lfo.frequency.value = 0.7;
+    lfoGain.gain.value = 220;
+    gain.gain.value = 0.05;
+    lfo.connect(lfoGain).connect(osc.frequency);
+    osc.connect(gain).connect(this.ctx.destination);
+    osc.start();
+    lfo.start();
+    this._sirenNodes = { osc, lfo, gain };
+  }
+  stopSiren() {
+    if (!this._sirenNodes) return;
+    try {
+      this._sirenNodes.osc.stop();
+      this._sirenNodes.lfo.stop();
+    } catch (err) { /* already stopped */ }
+    this._sirenNodes = null;
+  }
+  // The title screen's slow bass pulse; call once a second from the loop.
+  bassPulse() {
+    this._tone(55, 0.5, 'sine', 0.22, 48);
+    setTimeout(() => this._tone(82, 0.3, 'sine', 0.12), 250);
+  }
 }

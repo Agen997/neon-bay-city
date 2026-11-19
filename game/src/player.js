@@ -1,144 +1,61 @@
-// Neon Bay — Rex Marlowe on foot: walking, running, aiming, entering
-// cars, and taking damage. Driving lives in vehicles.js; this file is
-// only the person, so the two never fight over the same controls.
+// Neon Bay — Rex Marlowe on foot. Movement, facing, health, and the
+// enter/exit-car handoff; driving itself lives in vehicles.js.
 import { CFG } from './config.js';
-import { clamp, distance } from './random.js';
-import { moveWithCollision as slide, collidesSolid } from './world.js';
+import { moveCircle } from './world.js';
 
 export function createPlayer(x, y) {
   return {
-    x,
-    y,
-    angle: -Math.PI / 2,
-    radius: CFG.playerRadius,
-    health: CFG.playerMaxHealth,
-    cash: CFG.startCash,
-    car: null,
-    pistolCooldown: 0,
-    meleeCooldown: 0,
+    x, y,
+    angle: 0, // facing, radians; follows the mouse while on foot
+    hp: CFG.playerHp,
+    money: 0,
+    inCar: null,
+    speed: 0,
+    meleeCd: 0,
+    shootCd: 0,
+    arrestT: 0, // seconds a foot cop has held Rex close; 2.5 means busted
     hurtFlash: 0,
-    running: false,
-    moving: false,
+    dead: false,
   };
 }
 
-export function playerAimAngle(game) {
-  const p = game.player;
-  // Before the mouse has ever moved, aim where Rex is going: a fresh
-  // player who only uses the keyboard would otherwise always aim at the
-  // top-left corner of the screen.
-  if (!game.input.mouseMoved && (game.input.moveX !== 0 || game.input.moveY !== 0)) {
-    return Math.atan2(game.input.moveY, game.input.moveX);
-  }
-  const cam = game.camera;
-  const worldMouseX = cam.x + (game.input.mouseX - game.viewW / 2) / cam.zoom;
-  const worldMouseY = cam.y + (game.input.mouseY - game.viewH / 2) / cam.zoom;
-  return Math.atan2(worldMouseY - p.y, worldMouseX - p.x);
+export function updatePlayer(G, dt) {
+  const p = G.player;
+  const input = G.input;
+  if (p.meleeCd > 0) p.meleeCd -= dt;
+  if (p.shootCd > 0) p.shootCd -= dt;
+  if (p.hurtFlash > 0) p.hurtFlash -= dt;
+  if (p.inCar) return; // driving is vehicles.js's job
+  if (G.state !== 'playing') return;
+  // Aim follows the mouse; movement follows WASD.
+  const cam = G.camera;
+  const mx = cam.x + input.mouseX;
+  const my = cam.y + input.mouseY;
+  p.angle = Math.atan2(my - p.y, mx - p.x);
+  const mv = input.moveVector();
+  const running = input.down('Shift');
+  const speed = running ? CFG.runSpeed : CFG.walkSpeed;
+  const nx = p.x + mv.x * speed * dt;
+  const ny = p.y + mv.y * speed * dt;
+  const moved = moveCircle(G.world, p.x, p.y, nx - p.x, ny - p.y, CFG.playerRadius);
+  p.x = moved.x;
+  p.y = moved.y;
+  p.speed = mv.x !== 0 || mv.y !== 0 ? speed : 0;
+  // Keep Rex inside the world.
+  p.x = Math.max(20, Math.min(CFG.worldW - 20, p.x));
+  p.y = Math.max(20, Math.min(CFG.worldH - 20, p.y));
 }
 
-// One hit from going down: the HUD throbs a red edge at this point.
-export function isLowHealth(player) {
-  return player.health > 0 && player.health < 30;
-}
-
-export function updatePlayerOnFoot(game, dt) {
-  const p = game.player;
-  const input = game.input;
-  p.pistolCooldown = Math.max(0, p.pistolCooldown - dt);
-  p.meleeCooldown = Math.max(0, p.meleeCooldown - dt);
-  p.hurtFlash = Math.max(0, p.hurtFlash - dt);
-  p.angle = playerAimAngle(game);
-  p.running = input.isDown('ShiftLeft') || input.isDown('ShiftRight');
-  const speed = p.running ? CFG.runSpeed : CFG.walkSpeed;
-  const dx = input.moveX * speed * dt;
-  const dy = input.moveY * speed * dt;
-  p.moving = dx !== 0 || dy !== 0;
-  slide(game.world, p, dx, dy, p.radius);
-  // Slow health regen while the heat is off.
-  if (game.wanted === 0 && p.health > 0 && p.health < CFG.playerMaxHealth) {
-    p.health = Math.min(CFG.playerMaxHealth, p.health + 2.5 * dt);
+export function hurtPlayer(G, amount) {
+  const p = G.player;
+  if (p.hp <= 0 || G.state !== 'playing') return;
+  p.hp -= amount;
+  p.hurtFlash = 0.25;
+  G.audio.hit();
+  if (p.hp <= 0) {
+    p.hp = 0;
+    p.dead = true;
+    // Rex goes down the same way a bust does: the crew drags him back.
+    G.police.busted(G, 'down');
   }
-}
-
-export function nearestCarToPlayer(game, maxDist) {
-  // Prefer a car Rex does not own: pressing E beside your own ride and
-  // a car worth stealing should steal the car, not get you back into
-  // the one you just parked. Only when no unowned car is in reach does
-  // E take the nearest car, owned or not.
-  let bestUnowned = null;
-  let bestUnownedD = maxDist;
-  let bestOwned = null;
-  let bestOwnedD = maxDist;
-  for (const car of game.cars) {
-    if (car.wrecked) continue;
-    const d = distance(game.player.x, game.player.y, car.x, car.y);
-    if (!car.owned && d < bestUnownedD) {
-      bestUnowned = car;
-      bestUnownedD = d;
-    } else if (car.owned && d < bestOwnedD) {
-      bestOwned = car;
-      bestOwnedD = d;
-    }
-  }
-  return bestUnowned || bestOwned;
-}
-
-// E: step into the nearest car, or step out of the one being driven.
-export function tryEnterOrExitCar(game) {
-  const p = game.player;
-  if (p.car) {
-    const car = p.car;
-    car.speed = 0;
-    p.car = null;
-    // Step out on the driver's side so the player is never inside a wall.
-    // If both sides are blocked (a narrow alley), step out behind the car.
-    const spots = [
-      [Math.cos(car.angle + Math.PI / 2), Math.sin(car.angle + Math.PI / 2)],
-      [-Math.cos(car.angle + Math.PI / 2), -Math.sin(car.angle + Math.PI / 2)],
-      [-Math.cos(car.angle), -Math.sin(car.angle)],
-    ];
-    for (const [dx, dy] of spots) {
-      p.x = car.x + dx * 34;
-      p.y = car.y + dy * 34;
-      if (!collidesSolid(game.world, p.x, p.y, p.radius)) break;
-    }
-    game.addMessage('Out of the car.');
-    return;
-  }
-  const car = nearestCarToPlayer(game, 64);
-  if (!car) return;
-  p.car = car;
-  car.owner = 'player';
-  // The player's ride is sturdier than a random traffic car.
-  car.health = Math.max(car.health, CFG.playerCarHealth);
-  if (!car.owned) {
-    car.owned = true;
-    // A real theft: the mission that asks for a stolen car watches this.
-    game.justStole = true;
-    game.addWanted(1, 'Car stolen');
-    game.addMessage('You stole the car! The law noticed.');
-    game.sound.pickup();
-  } else {
-    game.addMessage('Back behind the wheel.');
-  }
-}
-
-export function damagePlayer(game, amount, source) {
-  const p = game.player;
-  if (p.health <= 0 || game.state !== 'playing') return;
-  p.health -= amount;
-  p.hurtFlash = 0.35;
-  game.shake = Math.min(10, game.shake + 4);
-  game.sound.hit();
-  if (p.health <= 0) {
-    p.health = 0;
-    game.state = 'dead';
-    game.sound.busted();
-    game.addMessage(`Taken down by ${source}.`);
-  }
-}
-
-export function healPlayer(game, amount) {
-  const p = game.player;
-  p.health = clamp(p.health + amount, 0, CFG.playerMaxHealth);
 }

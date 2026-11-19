@@ -1,299 +1,316 @@
-// Neon Bay — the story: five chained jobs for Mara Voss, the fixer who
-// runs the Neon Bay garage. Each mission is a list of steps; a step is
-// done by reaching a place, holding it, collecting drops, or clearing
-// the thugs the step spawns. Finishing a job pays cash and starts the next.
+// Neon Bay — Mara Voss's five jobs, in order. Each pays cash and starts the
+// next; a step's timer restarts with the step, and getting busted mid-fight
+// brings the crew back instead of skipping the fight. The King fight happens
+// on the lighthouse beach itself, the crew leashed to the sand.
 import { CFG } from './config.js';
-import { distance, randomPointInCircle, clamp } from './random.js';
 import { spawnThug } from './combat.js';
-import { addWanted } from './police.js';
-import { healPlayer } from './player.js';
-import { LIGHTHOUSE_BEACH } from './world.js';
 
-export const MISSIONS = [
+const DEFS = [
   {
-    id: 'first-wheels',
-    title: 'Job 1 — First Wheels',
-    giver: 'Mara Voss',
-    briefing: [
-      'Mara Voss: "New in Neon Bay, Rex? Then you need wheels."',
-      'Mara Voss: "Lift a car from Marina Parking, then bring it to my garage."',
-    ],
+    name: 'First Wheels',
+    pay: CFG.missionPay[0],
+    intro: 'Mara: "New in town needs wheels. Take any car on the street — then bring it to my garage."',
     steps: [
-      { kind: 'goto', text: 'Go to Marina Parking', spot: 'marina', radius: 90 },
-      { kind: 'steal', text: 'Steal a car (press E beside one)' },
-      { kind: 'goto', text: 'Drive to Mara’s Garage', spot: 'hideout', radius: 90 },
+      { label: 'Steal a car', timer: null },
+      { label: 'Bring the car to Mara\'s garage', timer: null },
     ],
   },
   {
-    id: 'neon-delivery',
-    title: 'Job 2 — Neon Delivery',
-    giver: 'Mara Voss',
-    briefing: [
-      'Mara Voss: "A package for the Harbor Diner. Ninety seconds. No police."',
-      'Mara Voss: "Drive fast, drive smooth, and do not get seen."',
-    ],
+    name: 'Hot Delivery',
+    pay: CFG.missionPay[1],
+    intro: 'Mara: "Package at the night market. Marina drop, and the clock is already running."',
     steps: [
-      { kind: 'goto', text: 'Pick up the package at the garage', spot: 'hideout', radius: 80, timer: 95 },
-      { kind: 'goto', text: 'Deliver it to Harbor Diner', spot: 'diner', radius: 80, timer: 95 },
+      { label: 'Pick up the package at the night market', timer: CFG.deliverySeconds },
+      { label: 'Deliver the package to the marina', timer: CFG.deliverySeconds },
     ],
   },
   {
-    id: 'pier-pressure',
-    title: 'Job 3 — Pier Pressure',
-    giver: 'Mara Voss',
-    briefing: [
-      'Mara Voss: "The Tide Kings stashed cash on Neon Pier. Take it back."',
-      'Mara Voss: "Three drops. Their boys will not hand them over nicely."',
-    ],
+    name: 'Pier Cash',
+    pay: CFG.missionPay[2],
+    intro: 'Mara: "Tide King\'s boys skimmed my cut. It is sitting at the end of the pier. Take it back."',
     steps: [
-      { kind: 'goto', text: 'Reach Neon Pier', spot: 'pier', radius: 110 },
-      { kind: 'collect', text: 'Collect 3 cash drops on the pier', count: 3 },
-      { kind: 'defeat', text: 'Clear out the Tide Kings on the pier' },
+      { label: 'Reach the end of the pier', timer: null },
+      { label: 'Take back the cash — clear the pier crew', timer: null },
+      { label: 'Bring the cash to Mara\'s garage', timer: null },
     ],
   },
   {
-    id: 'bay-trust-job',
-    title: 'Job 4 — Bay Trust Job',
-    giver: 'Mara Voss',
-    briefing: [
-      'Mara Voss: "Bay Trust Bank. In, hold the vault, out. The heat will come."',
-      'Mara Voss: "Lose the cops at the garage and the money is ours."',
-    ],
+    name: 'Bay Trust',
+    pay: CFG.missionPay[3],
+    intro: 'Mara: "Bay Trust vault, one guard shift, forty-five seconds. Hold the floor and walk out rich."',
     steps: [
-      { kind: 'goto', text: 'Reach Bay Trust Bank', spot: 'bank', radius: 90 },
-      { kind: 'hold', text: 'Hold the vault — stay in the circle', spot: 'bank', radius: 70, duration: 5 },
-      { kind: 'goto', text: 'Escape to Mara’s Garage', spot: 'hideout', radius: 90 },
+      { label: 'Get to the Bay Trust vault', timer: null },
+      { label: 'Hold the vault floor', timer: null },
+      { label: 'Bring the take to Mara\'s garage', timer: null },
     ],
   },
   {
-    id: 'king-tide',
-    title: 'Job 5 — King Tide',
-    giver: 'Mara Voss',
-    briefing: [
-      'Mara Voss: "Their boss, King, waits at Lighthouse Point. End this."',
-      'Mara Voss: "Take his crew down, then come home. Neon Bay is ours."',
-    ],
+    name: 'King at Lighthouse Point',
+    pay: CFG.missionPay[4],
+    intro: 'Mara: "King himself is waiting on the lighthouse beach. Finish him and this town is ours."',
     steps: [
-      { kind: 'goto', text: 'Reach Lighthouse Point', spot: 'lighthouse', radius: CFG.lighthouseGotoRadius },
-      { kind: 'defeat', text: 'Defeat King and his crew on the beach' },
-      { kind: 'goto', text: 'Return to Mara’s Garage', spot: 'hideout', radius: 90 },
+      { label: 'Go to the lighthouse beach', timer: null },
+      { label: 'Defeat King on the beach', timer: null },
     ],
   },
 ];
 
-export function currentMission(game) {
-  if (game.missionIndex >= MISSIONS.length) return null;
-  return MISSIONS[game.missionIndex];
+export function createMissions() {
+  return {
+    index: 0, // 0..4, 5 means all five done
+    step: 0,
+    timer: null, // seconds left on this step, or null
+    target: null, // {x, y, label, radius}
+    boss: null, // King, while he lives
+    vaultT: 0, // seconds held on the vault floor
+    waveT: 0,
+    pierCash: null, // {x, y} once the pier crew is down
+    hasPackage: false,
+    done: false,
+  };
 }
 
-export function currentStep(game) {
-  const mission = currentMission(game);
-  if (!mission) return null;
-  return mission.steps[game.missionStep] || null;
+export function currentMission(G) {
+  return DEFS[G.missions.index] || null;
 }
 
-export function objectiveText(game) {
-  const mission = currentMission(game);
-  if (!mission) return 'Neon Bay is yours — free roam. Press P for the menu.';
-  const step = currentStep(game);
-  if (!step) return mission.title;
-  return `${mission.title}: ${step.text}`;
+export function objectiveText(G) {
+  const m = G.missions;
+  if (m.done) return 'Neon Bay is yours.';
+  const def = DEFS[m.index];
+  if (!def) return '';
+  return `${def.name}: ${def.steps[m.step].label}`;
 }
 
-export function stepTarget(game) {
-  const step = currentStep(game);
-  if (!step || !step.spot) return null;
-  return game.world.spots[step.spot];
+function setTarget(G, x, y, label, radius) {
+  G.missions.target = { x, y, label, radius: radius || 70 };
 }
 
-export function startMission(game, index) {
-  const mission = MISSIONS[index];
-  game.missionIndex = index;
-  game.missionStep = 0;
-  game.missionTimer = 0;
-  game.holdProgress = 0;
-  game.justStole = false;
-  game.missionActive = true;
-  game.setDialogue(mission.giver, mission.briefing);
-  game.addMessage(`${mission.title} started.`);
-  game.sound.missionDone();
-}
-
-function advanceStep(game) {
-  game.missionStep += 1;
-  game.holdProgress = 0;
-  // Each timed step gets its own full timer: the clock restarts here,
-  // instead of carrying the previous step's elapsed time into the next one.
-  game.missionTimer = 0;
-  const mission = currentMission(game);
-  if (mission && game.missionStep >= mission.steps.length) {
-    completeMission(game);
+export function setupStep(G) {
+  const m = G.missions;
+  const def = DEFS[m.index];
+  if (!def) return;
+  const step = def.steps[m.step];
+  m.timer = step.timer;
+  m.vaultT = 0;
+  m.waveT = 0;
+  m.pierCash = null;
+  m.boss = null;
+  const spots = G.world.spots;
+  const beach = CFG.beach;
+  const beachCx = (beach.x0 + beach.x1) / 2;
+  const beachCy = (beach.y0 + beach.y1) / 2;
+  switch (m.index) {
+    case 0:
+      if (m.step === 0) setTarget(G, G.player.x + 100, G.player.y, 'Steal a car', 60);
+      else setTarget(G, spots.garage.x, spots.garage.y, "Mara's garage", 90);
+      break;
+    case 1:
+      if (m.step === 0) setTarget(G, spots.market.x, spots.market.y, 'Night market', 70);
+      else setTarget(G, spots.marina.x, spots.marina.y, 'Marina', 70);
+      break;
+    case 2:
+      if (m.step === 0) setTarget(G, G.world.pier.x1 - 30, (G.world.pier.y0 + G.world.pier.y1) / 2, 'End of the pier', 80);
+      else if (m.step === 1) {
+        setTarget(G, G.world.pier.x1 - 30, (G.world.pier.y0 + G.world.pier.y1) / 2, 'Pier crew', 60);
+        // The pier crew ambushes Rex at the end of the pier. Spawning here
+        // (not on arrival) means a bust mid-fight brings the crew back.
+        const px = G.world.pier.x1 - 60;
+        const py = (G.world.pier.y0 + G.world.pier.y1) / 2;
+        spawnThug(G, px - 40, py - 30, {});
+        spawnThug(G, px - 80, py + 20, {});
+        spawnThug(G, px - 20, py + 50, {});
+        G.hud.flash(G, "Tide King's crew is on the pier!");
+      }
+      else setTarget(G, spots.garage.x, spots.garage.y, "Mara's garage", 90);
+      break;
+    case 3:
+      if (m.step === 0) setTarget(G, spots.vault.x, spots.vault.y, 'Bay Trust vault', 80);
+      else if (m.step === 1) setTarget(G, spots.vault.x, spots.vault.y, 'Hold the vault', 110);
+      else setTarget(G, spots.garage.x, spots.garage.y, "Mara's garage", 90);
+      break;
+    case 4:
+      if (m.step === 0) {
+        // The goto circle reaches the whole beach: any sand counts.
+        setTarget(G, beachCx, beachCy, 'Lighthouse beach', 720);
+      } else {
+        setTarget(G, beachCx, beachCy, 'Defeat King', 720);
+        // King and his crew, leashed to the lighthouse sand. Spawning here
+        // (not on arrival) means a bust mid-fight brings the crew back.
+        const leash = { x0: beach.x0, y0: beach.y0, x1: beach.x1, y1: beach.y1 };
+        const king = spawnThug(G, 3300, 1300, { hp: CFG.kingHp, speed: CFG.kingSpeed, king: true, leash, name: 'King' });
+        m.boss = king;
+        spawnThug(G, 3220, 1500, { leash });
+        spawnThug(G, 3350, 1700, { leash });
+        spawnThug(G, 3200, 1900, { leash });
+        spawnThug(G, 3380, 1100, { leash });
+        G.hud.flash(G, 'King: "This beach is mine, Marlowe."');
+        G.audio.fail();
+      }
+      break;
+    default:
+      break;
   }
+  if (m.step === 0) G.hud.flash(G, def.intro);
 }
 
-function completeMission(game) {
-  const mission = currentMission(game);
-  const reward = CFG.missionReward[game.missionIndex] || 500;
-  game.addCash(reward, `${mission.title} complete`);
-  game.missionActive = false;
-  game.sound.missionDone();
-  game.setDialogue('Mara Voss', [`"${mission.title} done. $${reward} is yours, Rex."`]);
-  game.missionIndex += 1;
-  if (game.missionIndex >= MISSIONS.length) {
-    game.won = true;
-    game.state = 'won';
-    game.addMessage('All jobs done — Neon Bay is yours.');
-    // A finished game has nothing to continue: clear the save so the
-    // title offers a fresh start instead of a continue into a won game.
-    if (game.clearSave) game.clearSave();
-    game.hasSave = false;
+export function startMissions(G) {
+  G.missions.index = 0;
+  G.missions.step = 0;
+  G.missions.done = false;
+  setupStep(G);
+}
+
+function nextStep(G) {
+  const m = G.missions;
+  const def = DEFS[m.index];
+  m.step++;
+  if (m.step >= def.steps.length) {
+    completeMission(G);
     return;
   }
-  game.startMissionTimer = 1.2;
+  setupStep(G);
 }
 
-function failMissionTimer(game) {
-  const mission = currentMission(game);
-  game.addMessage(`${mission.title}: too slow — the job fell through. Try again.`);
-  game.missionStep = 0;
-  game.holdProgress = 0;
-  game.setDialogue('Mara Voss', ['"Too slow, Rex. Run it again, from the top."']);
-}
-
-function spawnPierCrew(game) {
-  game.collectedDrops = 0;
-  const pier = game.world.spots.pier;
-  // The pier spans x 2752-3152: every thug and drop must stand on its
-  // boards, not in the water past its east end (a drop at pier.x + 160
-  // was uncollectable and soft-locked the mission).
-  spawnThug(game, pier.x - 60, pier.y - 30);
-  spawnThug(game, pier.x + 40, pier.y + 40);
-  spawnThug(game, pier.x + 90, pier.y - 20);
-  spawnThug(game, pier.x - 120, pier.y + 50);
-  // Three cash drops along the pier.
-  game.pickups.push(
-    { x: pier.x - 100, y: pier.y - 40, kind: 'cash', taken: false },
-    { x: pier.x + 10, y: pier.y + 30, kind: 'cash', taken: false },
-    { x: pier.x + 90, y: pier.y - 10, kind: 'cash', taken: false },
-  );
-}
-
-export function spawnKingCrew(game) {
-  // The lighthouse stands in the water; its crew waits on the beach
-  // (the dry strip x 2816-2944), not out in the bay where no one can
-  // reach them on foot. The crew is scattered over the beach around the
-  // lighthouse point, and every thug is leashed to a rectangle of sand:
-  // a thug that chased too far walks back instead of following the
-  // player into town, so the fight stays on the beach it started on.
-  // The lighthouse goto circle reaches the whole beach now (radius 220
-  // from the point in the bay), so the player triggers the fight from
-  // the beach itself instead of hugging the water's edge.
-  const leash = { x0: 2830, y0: 170, x1: 2935, y1: 510, cx: LIGHTHOUSE_BEACH.x, cy: LIGHTHOUSE_BEACH.y };
-  for (let i = 0; i < 4; i += 1) {
-    const spot = randomPointInCircle(game.rng, LIGHTHOUSE_BEACH.x, LIGHTHOUSE_BEACH.y, 110);
-    const x = clamp(spot.x, 2820, 2930);
-    const y = clamp(spot.y, 200, 480);
-    spawnThug(game, x, y, { leash });
-  }
-  const king = spawnThug(game, LIGHTHOUSE_BEACH.x + 5, LIGHTHOUSE_BEACH.y + 10, { leash });
-  king.health = 220;
-  king.boss = true;
-  king.speed = 165;
-  game.sound.boss();
-  game.addMessage('King is on the beach — finish him here.');
-}
-
-// After a bust or a death the fight must be fought again: respawning wipes
-// the crew, so a 'defeat' step would otherwise complete itself with no one
-// left to fight, and a 'collect' step would have no drops left to pick up.
-export function respawnMissionCrew(game) {
-  const mission = currentMission(game);
-  if (!mission || !game.missionActive) return;
-  const step = currentStep(game);
-  if (!step) return;
-  if (step.kind === 'defeat' && mission.id === 'pier-pressure') spawnPierCrew(game);
-  else if (step.kind === 'defeat' && mission.id === 'king-tide') spawnKingCrew(game);
-  else if (step.kind === 'collect' && mission.id === 'pier-pressure') spawnPierCrew(game);
-}
-
-export function updateMissions(game, dt) {
-  if (game.state !== 'playing') return;
-  if (!currentMission(game)) return;
-  // Brief pause between jobs, then the next briefing.
-  if (!game.missionActive) {
-    game.startMissionTimer -= dt;
-    if (game.startMissionTimer <= 0) startMission(game, game.missionIndex);
+function completeMission(G) {
+  const m = G.missions;
+  const def = DEFS[m.index];
+  G.player.money += def.pay;
+  G.audio.coin();
+  G.audio.jingle();
+  G.hud.flash(G, `${def.name} done — $${def.pay} paid.`);
+  m.index++;
+  m.step = 0;
+  if (m.index >= DEFS.length) {
+    m.done = true;
+    m.target = null;
+    m.boss = null;
+    G.state = 'won';
+    G.clearSave();
+    G.audio.jingle();
     return;
   }
-  const mission = currentMission(game);
-  const step = currentStep(game);
-  if (!step) return;
-  const player = game.player;
-  const pos = player.car ? { x: player.car.x, y: player.car.y } : player;
+  G.save();
+  setupStep(G);
+}
 
-  if (step.timer) {
-    game.missionTimer += dt;
-    if (game.missionTimer > step.timer) {
-      failMissionTimer(game);
-      game.missionTimer = 0;
+function restartStep(G, why) {
+  G.hud.flash(G, why);
+  G.audio.fail();
+  setupStep(G);
+}
+
+export function onEvent(G, type, data) {
+  const m = G.missions;
+  if (m.done || G.state !== 'playing') return;
+  if (type === 'steal' && m.index === 0 && m.step === 0) {
+    nextStep(G);
+  }
+  if (type === 'thugDown') {
+    if (m.index === 2 && m.step === 1 && G.combat.thugs.length === 0 && !m.pierCash) {
+      m.pierCash = { x: G.world.pier.x1 - 60, y: (G.world.pier.y0 + G.world.pier.y1) / 2 };
+      G.hud.flash(G, 'Crew down — grab the cash bag.');
+    }
+  }
+  if (type === 'kingDown' && m.index === 4 && m.step === 1) {
+    m.boss = null;
+    nextStep(G); // completes mission 5, which wins the game
+  }
+}
+
+// Busted mid-fight brings the crew back instead of skipping the fight.
+export function onBusted(G) {
+  const m = G.missions;
+  if (m.done) return;
+  G.combat.thugs = [];
+  G.combat.bullets = [];
+  G.combat.packs = [];
+  setupStep(G);
+}
+
+function atTarget(G) {
+  const t = G.missions.target;
+  if (!t) return false;
+  return Math.hypot(G.player.x - t.x, G.player.y - t.y) < t.radius;
+}
+
+export function updateMissions(G, dt) {
+  const m = G.missions;
+  if (m.done || G.state !== 'playing') return;
+  // The step timer restarts with the step; running out restarts the step.
+  if (m.timer !== null) {
+    m.timer -= dt;
+    if (m.timer <= 0) {
+      restartStep(G, 'Out of time — the step starts over.');
       return;
     }
   }
-
-  if (step.kind === 'goto') {
-    const target = game.world.spots[step.spot];
-    if (distance(pos.x, pos.y, target.x, target.y) < step.radius) {
-      if (mission.id === 'pier-pressure' && game.missionStep === 0) spawnPierCrew(game);
-      if (mission.id === 'king-tide' && game.missionStep === 0) spawnKingCrew(game);
-      advanceStep(game);
-    }
-  } else if (step.kind === 'steal') {
-    // A theft, not just a seat: the player must have lifted a car they did
-    // not already own since this job started. Getting back into their own
-    // starter car does not count.
-    if (game.justStole) {
-      game.justStole = false;
-      advanceStep(game);
-    }
-  } else if (step.kind === 'collect') {
-    if ((game.collectedDrops || 0) >= step.count) advanceStep(game);
-  } else if (step.kind === 'hold') {
-    const target = game.world.spots[step.spot];
-    if (distance(pos.x, pos.y, target.x, target.y) < step.radius) {
-      game.holdProgress += dt;
-      if (game.holdProgress >= step.duration) {
-        addWanted(game, 3, 'Bank alarm tripped');
-        game.addCash(300, 'Vault cash grabbed');
-        advanceStep(game);
+  const spots = G.world.spots;
+  switch (m.index) {
+    case 0: {
+      if (m.step === 0) {
+        // The target follows the nearest car worth stealing.
+        const car = G.vehicles.nearestCar(G, G.player.x, G.player.y);
+        if (car) setTarget(G, car.x, car.y, 'Steal a car', 60);
+      } else if (G.player.inCar && atTarget(G)) {
+        nextStep(G);
       }
-    } else {
-      game.holdProgress = Math.max(0, game.holdProgress - dt * 2);
+      break;
     }
-  } else if (step.kind === 'defeat') {
-    if (game.thugs.length === 0) advanceStep(game);
-  }
-}
-
-// Cash drops and packages lying in the world.
-export function updatePickups(game, dt) {
-  const player = game.player;
-  const pos = player.car ? { x: player.car.x, y: player.car.y } : player;
-  for (const pk of game.pickups) {
-    if (pk.taken) continue;
-    if (distance(pos.x, pos.y, pk.x, pk.y) < 34) {
-      pk.taken = true;
-      if (pk.kind === 'cash') {
-        game.collectedDrops = (game.collectedDrops || 0) + 1;
-        game.addCash(150, 'Cash drop collected');
-      } else if (pk.kind === 'health') {
-        healPlayer(game, CFG.healthPickupHeal);
-        game.addMessage(`+${CFG.healthPickupHeal} health — patched up.`);
-      } else {
-        game.addCash(100, 'Package collected');
+    case 1: {
+      if (m.step === 0 && atTarget(G)) {
+        m.hasPackage = true;
+        G.audio.pickup();
+        nextStep(G);
+      } else if (m.step === 1 && atTarget(G)) {
+        m.hasPackage = false;
+        nextStep(G);
       }
-      game.sound.cash();
-      game.addParticles(pk.x, pk.y, '#ffcf3f', 10);
+      break;
     }
+    case 2: {
+      if (m.step === 0 && atTarget(G)) {
+        // Entering the ambush: setupStep spawns the pier crew.
+        nextStep(G);
+      } else if (m.step === 1) {
+        if (m.pierCash && Math.hypot(G.player.x - m.pierCash.x, G.player.y - m.pierCash.y) < 34) {
+          m.pierCash = null;
+          G.audio.pickup();
+          nextStep(G);
+        }
+      } else if (m.step === 2 && atTarget(G)) {
+        nextStep(G);
+      }
+      break;
+    }
+    case 3: {
+      if (m.step === 0 && atTarget(G)) {
+        nextStep(G);
+      } else if (m.step === 1) {
+        const inVault = Math.hypot(G.player.x - spots.vault.x, G.player.y - spots.vault.y) < 110;
+        if (inVault) {
+          m.vaultT += dt;
+          m.waveT += dt;
+          if (m.waveT > 11) {
+            m.waveT = 0;
+            spawnThug(G, spots.vault.x + 140, spots.vault.y - 60, {});
+            spawnThug(G, spots.vault.x - 140, spots.vault.y + 60, {});
+          }
+          if (m.vaultT >= CFG.vaultHoldSeconds) nextStep(G);
+        }
+      } else if (m.step === 2 && atTarget(G)) {
+        nextStep(G);
+      }
+      break;
+    }
+    case 4: {
+      if (m.step === 0 && atTarget(G)) {
+        // Entering the fight: setupStep spawns King and his crew on the sand.
+        nextStep(G);
+      }
+      break;
+    }
+    default:
+      break;
   }
-  game.pickups = game.pickups.filter((pk) => !pk.taken);
 }

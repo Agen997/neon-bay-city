@@ -1,285 +1,290 @@
-// Neon Bay — everything drawn on top of the world: the HUD, the minimap,
-// the mission banner, dialogue, and the title / pause / end screens.
-// The judge reads the game mostly through these screens, so they carry
-// the wanted stars, the cash, the objective and the minimap at all times.
-import { CFG, PALETTE, CONTROLS } from './config.js';
-import { objectiveText, currentMission, currentStep, stepTarget } from './missions.js';
-import { WATER_X, roadCenters } from './world.js';
-import { isLowHealth } from './player.js';
+// Neon Bay — HUD, minimap and menus. Health, cash, wanted stars, the clock,
+// the current objective, five job pips, the King boss bar, a low-health
+// pulse, and a live minimap with the mission target and every police unit.
+import { CFG, PALETTE, NAMES } from './config.js';
+import { wantedStars } from './police.js';
+import { objectiveText } from './missions.js';
 
-function panel(ctx, x, y, w, h) {
-  ctx.fillStyle = PALETTE.hudPanel;
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 10);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+export function flash(G, msg) {
+  G.hudState.flashMsg = msg;
+  G.hudState.flashT = 4.5;
+}
+
+function bar(ctx, x, y, w, h, frac, fill, bg) {
+  ctx.fillStyle = bg;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = fill;
+  ctx.fillRect(x, y, Math.max(0, Math.min(1, frac)) * w, h);
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
   ctx.lineWidth = 1;
-  ctx.stroke();
+  ctx.strokeRect(x + 0.5, y + 0.5, w, h);
 }
 
-export function gameClock(game) {
-  // The city runs on a fast clock: noon plus one game hour per 90 seconds.
-  const totalMinutes = 12 * 60 + Math.floor(game.elapsed / 90) * 60 + Math.floor((game.elapsed % 90) / 1.5);
-  const h = Math.floor(totalMinutes / 60) % 24;
-  const m = totalMinutes % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-}
-
-export function drawHUD(ctx, game) {
-  const p = game.player;
-  const W = game.viewW;
+export function drawHUD(G) {
+  const ctx = G.ctx;
+  const p = G.player;
+  const W = CFG.viewW;
+  // Low-health pulse.
+  if (p.hp < 30 && G.state === 'playing') {
+    const a = 0.25 + 0.15 * Math.sin(G.time * 6);
+    const grad = ctx.createRadialGradient(W / 2, CFG.viewH / 2, CFG.viewH * 0.35, W / 2, CFG.viewH / 2, CFG.viewH * 0.75);
+    grad.addColorStop(0, 'rgba(200,0,0,0)');
+    grad.addColorStop(1, `rgba(200,0,0,${a})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, CFG.viewH);
+  }
   // Top-left: health and cash.
-  panel(ctx, 14, 14, 250, 64);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 15px sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText('REX MARLOWE', 26, 36);
-  ctx.fillStyle = '#222';
-  ctx.fillRect(26, 44, 150, 12);
-  ctx.fillStyle = p.health > 35 ? '#37d67a' : '#ff5252';
-  ctx.fillRect(26, 44, Math.max(0, 150 * (p.health / CFG.playerMaxHealth)), 12);
-  ctx.fillStyle = PALETTE.hudAccent;
-  ctx.font = 'bold 16px sans-serif';
-  ctx.fillText(`$${Math.floor(p.cash)}`, 186, 56);
+  ctx.textBaseline = 'alphabetic';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.fillText('HEALTH', 16, 22);
+  bar(ctx, 16, 28, 200, 14, p.hp / CFG.playerHp, p.hp < 30 ? '#e03a3a' : '#39d353', 'rgba(0,0,0,0.55)');
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillStyle = '#ffd94a';
+  ctx.fillText(`$${p.money}`, 16, 66);
+  ctx.font = '13px sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.fillText(p.inCar ? 'DRIVING — E to exit' : 'ON FOOT — E to enter a car', 16, 86);
   // Top-right: wanted stars and the clock.
-  panel(ctx, W - 214, 14, 200, 64);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 14px sans-serif';
-  ctx.fillText(gameClock(game), W - 200, 36);
-  ctx.font = '20px sans-serif';
-  let stars = '';
-  for (let i = 0; i < CFG.wantedMax; i += 1) stars += i < game.wanted ? '★' : '☆';
-  ctx.fillStyle = game.wanted > 0 ? '#ffd166' : 'rgba(255,255,255,0.55)';
-  ctx.fillText(stars, W - 200, 62);
-  // Mission banner, top centre.
-  const objective = objectiveText(game);
-  ctx.font = 'bold 15px sans-serif';
-  const ow = Math.min(620, ctx.measureText(objective).width + 36);
-  panel(ctx, (W - ow) / 2, 14, ow, 38);
-  ctx.fillStyle = PALETTE.hudAccent;
-  ctx.textAlign = 'center';
-  ctx.fillText(objective, W / 2, 38);
-  // Job-progress pips: five dots under the banner, filled as jobs complete.
-  const done = Math.min(game.missionIndex, 5);
-  const pipW = 5 * 22;
-  for (let i = 0; i < 5; i += 1) {
-    ctx.fillStyle = i < done ? PALETTE.hudAccent : 'rgba(255,255,255,0.35)';
-    ctx.beginPath();
-    ctx.arc((W - pipW) / 2 + 11 + i * 22, 66, 6, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  // Mission timer, under the banner.
-  const step = currentStep(game);
-  if (step && step.timer && game.missionActive) {
-    const left = Math.max(0, step.timer - game.missionTimer);
-    ctx.fillStyle = left < 20 ? '#ff5252' : '#fff';
-    ctx.font = 'bold 16px sans-serif';
-    ctx.fillText(`${Math.ceil(left)}s left`, W / 2, 92);
-  }
-  // Hold-the-vault progress.
-  if (step && step.kind === 'hold' && game.holdProgress > 0) {
-    panel(ctx, (W - 260) / 2, 100, 260, 22);
-    ctx.fillStyle = PALETTE.neonCyan;
-    ctx.fillRect((W - 260) / 2 + 6, 105, 248 * (game.holdProgress / step.duration), 12);
-  }
-  // Boss bar: King's health, while the boss is alive on the beach.
-  const boss = game.bossThug ? game.bossThug() : null;
-  if (boss) {
-    panel(ctx, (W - 300) / 2, 100, 300, 34);
-    ctx.fillStyle = '#ffcf3f';
-    ctx.font = 'bold 13px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('KING — TIDE KINGS BOSS', W / 2, 114);
-    ctx.fillStyle = '#222';
-    ctx.fillRect((W - 300) / 2 + 10, 120, 280, 8);
-    ctx.fillStyle = '#e84a4a';
-    ctx.fillRect((W - 300) / 2 + 10, 120, Math.max(0, 280 * (boss.health / 220)), 8);
-  }
-  // Bottom-left: messages.
-  ctx.textAlign = 'left';
-  ctx.font = '14px sans-serif';
-  let my = game.viewH - 24;
-  for (let i = game.messages.length - 1; i >= 0; i -= 1) {
-    const msg = game.messages[i];
-    ctx.globalAlpha = Math.max(0, Math.min(1, msg.life / 2));
-    ctx.fillStyle = '#fff';
-    ctx.fillText(msg.text, 16, my);
-    my -= 20;
-  }
-  ctx.globalAlpha = 1;
-  // Bottom-left hint, small.
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  ctx.font = '12px sans-serif';
-  ctx.fillText('WASD move/drive · E enter car · Click shoot · Space punch · P pause', 16, game.viewH - 118);
-  // Dialogue box.
-  if (game.dialogue) drawDialogue(ctx, game);
-  // Damage flash.
-  if (p.hurtFlash > 0) {
-    ctx.fillStyle = `rgba(255,40,40,${p.hurtFlash * 0.35})`;
-    ctx.fillRect(0, 0, W, game.viewH);
-  }
-  // Low-health pulse: a red edge that throbs while Rex is one hit from
-  // going down, so the danger reads even without looking at the bar.
-  if (isLowHealth(p)) {
-    const pulse = 0.10 + 0.06 * Math.sin(game.elapsed * 5);
-    ctx.fillStyle = `rgba(255,40,40,${pulse})`;
-    ctx.fillRect(0, 0, W, 10);
-    ctx.fillRect(0, game.viewH - 10, W, 10);
-    ctx.fillRect(0, 0, 10, game.viewH);
-    ctx.fillRect(W - 10, 0, 10, game.viewH);
-  }
-  drawMinimap(ctx, game);
-}
-
-function drawDialogue(ctx, game) {
-  const d = game.dialogue;
-  const W = game.viewW;
-  panel(ctx, (W - 640) / 2, game.viewH - 108, 640, 66);
-  ctx.fillStyle = PALETTE.neonPink;
-  ctx.font = 'bold 14px sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillText(d.speaker, (W - 640) / 2 + 18, game.viewH - 82);
-  ctx.fillStyle = '#fff';
-  ctx.font = '15px sans-serif';
-  ctx.fillText(d.lines[d.lineIndex], (W - 640) / 2 + 18, game.viewH - 58);
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  ctx.font = '11px sans-serif';
+  const stars = wantedStars(G.police);
   ctx.textAlign = 'right';
-  ctx.fillText('click to continue', (W + 640) / 2 - 14, game.viewH - 52);
-  ctx.textAlign = 'left';
+  ctx.font = '26px sans-serif';
+  let starText = '';
+  for (let i = 0; i < 5; i++) starText += i < stars ? '★' : '☆';
+  ctx.fillStyle = stars > 0 ? '#ffd94a' : 'rgba(255,255,255,0.55)';
+  ctx.fillText(starText, W - 16, 40);
+  const mins = G.clockMinutes % (24 * 60);
+  const hh = String(Math.floor(mins / 60)).padStart(2, '0');
+  const mm = String(Math.floor(mins % 60)).padStart(2, '0');
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.fillText(`${hh}:${mm}`, W - 16, 66);
+  ctx.font = '13px sans-serif';
+  ctx.fillText(G.audio.muted ? 'MUTED (M)' : 'M — mute', W - 16, 86);
+  // Top-centre: objective, timer, mission pips.
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.fillText(objectiveText(G), W / 2, 24);
+  if (G.missions.timer !== null && G.state === 'playing') {
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillStyle = G.missions.timer < 15 ? '#ff5a5a' : '#ffd94a';
+    ctx.fillText(`${Math.ceil(G.missions.timer)}s`, W / 2, 52);
+  }
+  // Five job pips.
+  const pipY = G.missions.timer !== null ? 72 : 46;
+  for (let i = 0; i < 5; i++) {
+    const x = W / 2 - 44 + i * 22;
+    ctx.beginPath();
+    ctx.arc(x, pipY, 7, 0, Math.PI * 2);
+    ctx.fillStyle = i < G.missions.index ? '#39d353' : i === G.missions.index ? '#ffd94a' : 'rgba(255,255,255,0.35)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.stroke();
+  }
+  // Boss health bar while King lives.
+  if (G.missions.boss && G.missions.boss.hp > 0) {
+    const bw = 420;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillStyle = '#ff5a5a';
+    ctx.fillText('KING — TIDE KING', W / 2, pipY + 30);
+    bar(ctx, W / 2 - bw / 2, pipY + 36, bw, 14, G.missions.boss.hp / CFG.kingHp, '#c92a2a', 'rgba(0,0,0,0.6)');
+  }
+  // Flash message.
+  if (G.hudState.flashT > 0) {
+    ctx.globalAlpha = Math.min(1, G.hudState.flashT);
+    ctx.font = 'bold 17px sans-serif';
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    const lines = wrapText(ctx, G.hudState.flashMsg, 760);
+    let y = 110;
+    for (const line of lines) {
+      ctx.fillText(line, W / 2, y);
+      y += 22;
+    }
+    ctx.globalAlpha = 1;
+  }
+  drawMinimap(G);
 }
 
-export function drawMinimap(ctx, game) {
-  const size = CFG.minimapSize;
-  const x0 = game.viewW - size - 16;
-  const y0 = game.viewH - size - 16;
-  const scale = size / CFG.worldSize;
-  panel(ctx, x0 - 6, y0 - 6, size + 12, size + 12);
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(x0, y0, size, size);
-  ctx.clip();
-  ctx.fillStyle = '#2c6e3f';
-  ctx.fillRect(x0, y0, size, size);
-  // The bay.
-  ctx.fillStyle = '#1f7fb5';
-  ctx.fillRect(x0 + WATER_X * scale, y0, size - WATER_X * scale, size);
-  // Roads.
-  ctx.strokeStyle = '#3a3f4a';
-  ctx.lineWidth = 3;
-  for (const c of roadCenters()) {
+function wrapText(ctx, text, maxW) {
+  const words = text.split(' ');
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width > maxW && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function drawMinimap(G) {
+  const ctx = G.ctx;
+  const mw = 220;
+  const mh = 156;
+  const x0 = CFG.viewW - mw - 14;
+  const y0 = CFG.viewH - mh - 14;
+  const sx = mw / CFG.worldW;
+  const sy = mh / CFG.worldH;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(x0 - 4, y0 - 4, mw + 8, mh + 8);
+  ctx.fillStyle = PALETTE.water;
+  ctx.fillRect(x0, y0, mw, mh);
+  ctx.fillStyle = PALETTE.sand;
+  ctx.fillRect(x0 + CFG.beachX0 * sx, y0, (CFG.waterX0 - CFG.beachX0) * sx, mh);
+  ctx.fillStyle = PALETTE.grass;
+  ctx.fillRect(x0, y0, CFG.citySize * sx, mh);
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.lineWidth = 1;
+  for (const c of G.world.centers) {
     ctx.beginPath();
-    ctx.moveTo(x0 + c * scale, y0);
-    ctx.lineTo(x0 + c * scale, y0 + size);
+    ctx.moveTo(x0 + c * sx, y0);
+    ctx.lineTo(x0 + c * sx, y0 + CFG.citySize * sy);
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(x0, y0 + c * scale);
-    ctx.lineTo(x0 + size, y0 + c * scale);
+    ctx.moveTo(x0, y0 + c * sy);
+    ctx.lineTo(x0 + CFG.citySize * sx, y0 + c * sy);
     ctx.stroke();
+  }
+  // Buildings as dots.
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  for (const b of G.world.buildings) {
+    ctx.fillRect(x0 + b.x * sx, y0 + b.y * sy, Math.max(1, b.w * sx), Math.max(1, b.h * sy));
   }
   // Mission target.
-  const target = stepTarget(game);
-  if (target && game.state === 'playing') {
-    ctx.fillStyle = PALETTE.hudAccent;
+  const t = G.missions.target;
+  if (t && G.state === 'playing') {
+    ctx.fillStyle = '#ffd94a';
     ctx.beginPath();
-    ctx.arc(x0 + target.x * scale, y0 + target.y * scale, 6, 0, Math.PI * 2);
+    ctx.arc(x0 + t.x * sx, y0 + t.y * sy, 5, 0, Math.PI * 2);
     ctx.fill();
   }
-  // Police, blue.
-  ctx.fillStyle = '#6aa5ff';
-  for (const unit of game.police) {
-    const q = unit.kind === 'car' ? unit.car : unit;
-    ctx.fillRect(x0 + q.x * scale - 2, y0 + q.y * scale - 2, 4, 4);
+  // Police units.
+  ctx.fillStyle = '#2a6aff';
+  for (const c of G.police.cruisers) {
+    ctx.beginPath();
+    ctx.arc(x0 + c.car.x * sx, y0 + c.car.y * sy, 3.5, 0, Math.PI * 2);
+    ctx.fill();
   }
-  // The player, white arrow.
-  const p = game.player;
-  const px = p.car ? p.car.x : p.x;
-  const py = p.car ? p.car.y : p.y;
+  for (const cop of G.police.cops) {
+    ctx.beginPath();
+    ctx.arc(x0 + cop.x * sx, y0 + cop.y * sy, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Thugs.
+  ctx.fillStyle = '#ff5a5a';
+  for (const thug of G.combat.thugs) {
+    ctx.beginPath();
+    ctx.arc(x0 + thug.x * sx, y0 + thug.y * sy, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Rex.
   ctx.fillStyle = '#fff';
   ctx.beginPath();
-  ctx.arc(x0 + px * scale, y0 + py * scale, 5, 0, Math.PI * 2);
+  ctx.arc(x0 + G.player.x * sx, y0 + G.player.y * sy, 4, 0, Math.PI * 2);
   ctx.fill();
-  ctx.restore();
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 12px sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillText('NEON BAY', x0, y0 - 10);
+  ctx.strokeStyle = '#fff';
+  ctx.strokeRect(x0 + G.camera.x * sx, y0 + G.camera.y * sy, CFG.viewW * sx, CFG.viewH * sy);
 }
 
-function bigTitle(ctx, game) {
-  const W = game.viewW;
-  const H = game.viewH;
-  const grad = ctx.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0, 'rgba(10,10,40,0.72)');
-  grad.addColorStop(0.55, 'rgba(40,10,60,0.55)');
-  grad.addColorStop(1, 'rgba(255,77,166,0.28)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, H);
-  ctx.textAlign = 'center';
-  ctx.fillStyle = PALETTE.neonCyan;
-  ctx.font = 'bold 92px sans-serif';
-  ctx.fillText('NEON BAY', W / 2, 190);
-  ctx.fillStyle = PALETTE.hudAccent;
-  ctx.font = 'bold 24px sans-serif';
-  ctx.fillText('AN ORIGINAL OPEN-WORLD CRIME GAME', W / 2, 232);
-  ctx.fillStyle = '#fff';
-  ctx.font = '17px sans-serif';
-  ctx.fillText('Rex Marlowe is new in town. Mara Voss has five jobs for him —', W / 2, 282);
-  ctx.fillText('and the Neon Bay Police Department has other plans.', W / 2, 306);
+function overlay(ctx, alpha) {
+  ctx.fillStyle = `rgba(8,10,24,${alpha})`;
+  ctx.fillRect(0, 0, CFG.viewW, CFG.viewH);
 }
 
-export function drawTitle(ctx, game) {
-  bigTitle(ctx, game);
-  const W = game.viewW;
+function titleText(ctx, lines, y, gap) {
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 20px sans-serif';
-  ctx.fillText(game.hasSave ? 'Press ENTER to continue, or N for a new game' : 'Press ENTER to start', W / 2, 380);
-  ctx.font = '15px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  let y = 428;
-  for (const [key, action] of CONTROLS) {
-    ctx.fillText(`${key} — ${action}`, W / 2, y);
-    y += 24;
+  for (const line of lines) {
+    ctx.fillText(line.text, CFG.viewW / 2, y);
+    y += gap;
   }
+  return y;
+}
+
+export function drawTitle(G) {
+  const ctx = G.ctx;
+  overlay(ctx, 0.62);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd94a';
+  ctx.font = 'bold 84px sans-serif';
+  ctx.fillText('NEON BAY', CFG.viewW / 2, 190);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillText('An open-world crime game — built by an AI agent for make.fun', CFG.viewW / 2, 232);
+  ctx.font = '16px sans-serif';
+  ctx.fillStyle = '#cfe3ff';
+  let y = 300;
+  y = titleText(ctx, [
+    { text: `${NAMES.player} is new in town. ${NAMES.fixer} has five jobs for him.` },
+    { text: 'The NBPD has other plans.' },
+  ], y, 24);
+  y += 26;
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillStyle = '#fff';
+  const hasSave = !!G.saveData;
+  ctx.fillText(hasSave ? 'ENTER — Continue your game' : 'ENTER or CLICK — Start a new game', CFG.viewW / 2, y);
+  y += 34;
+  ctx.font = '15px sans-serif';
+  ctx.fillStyle = '#cfe3ff';
+  y = titleText(ctx, [
+    { text: 'WASD move / drive · Mouse aim · Click shoot · Space melee' },
+    { text: 'E enter or steal a car · Shift run · P pause · M mute' },
+  ], y, 22);
+  y += 20;
   ctx.fillStyle = 'rgba(255,255,255,0.6)';
   ctx.font = '13px sans-serif';
-  ctx.fillText('Steal cars, dodge the NBPD, run five story jobs, and own the city. All art, names and music are original.', W / 2, y + 22);
+  ctx.fillText('Every name, character, street and sound is original.', CFG.viewW / 2, y);
 }
 
-export function drawPause(ctx, game) {
-  ctx.fillStyle = 'rgba(8,10,24,0.72)';
-  ctx.fillRect(0, 0, game.viewW, game.viewH);
+export function drawPause(G) {
+  const ctx = G.ctx;
+  overlay(ctx, 0.55);
   ctx.textAlign = 'center';
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 52px sans-serif';
-  ctx.fillText('PAUSED', game.viewW / 2, 240);
-  ctx.font = '17px sans-serif';
-  ctx.fillText('P — resume · M — mute · Q — quit to title (progress auto-saves)', game.viewW / 2, 292);
-  ctx.font = '15px sans-serif';
-  const mission = currentMission(game);
-  ctx.fillText(mission ? `Current job: ${mission.title}` : 'Free roam — every job done.', game.viewW / 2, 330);
-  ctx.fillText(`Cash $${Math.floor(game.player.cash)} · Health ${Math.floor(game.player.health)} · Wanted ${game.wanted}★`, game.viewW / 2, 360);
-}
-
-export function drawEndScreen(ctx, game, kind) {
-  ctx.fillStyle = kind === 'won' ? 'rgba(10,40,20,0.78)' : 'rgba(24,8,10,0.78)';
-  ctx.fillRect(0, 0, game.viewW, game.viewH);
-  ctx.textAlign = 'center';
-  ctx.fillStyle = kind === 'won' ? PALETTE.hudAccent : '#ff6b6b';
   ctx.font = 'bold 56px sans-serif';
-  const title = kind === 'won' ? 'NEON BAY IS YOURS' : kind === 'busted' ? 'BUSTED!' : 'WASTED';
-  ctx.fillText(title, game.viewW / 2, 260);
-  ctx.fillStyle = '#fff';
+  ctx.fillText('PAUSED', CFG.viewW / 2, 260);
   ctx.font = '18px sans-serif';
-  const line =
-    kind === 'won'
-      ? 'All five jobs done. King is finished, Mara is happy, and the city answers to Rex.'
-      : kind === 'busted'
-        ? 'The NBPD hauled you in. Mara posts bail — but the heat stays on.'
-        : 'Rex went down in the streets of Neon Bay. Mara is already sending a car.';
-  ctx.fillText(line, game.viewW / 2, 310);
-  ctx.font = '16px sans-serif';
-  ctx.fillText(`Cash $${Math.floor(game.player.cash)} · Jobs done ${Math.min(game.missionIndex, 5)} of 5`, game.viewW / 2, 350);
-  ctx.fillText('Press ENTER to keep playing', game.viewW / 2, 400);
+  ctx.fillStyle = '#cfe3ff';
+  ctx.fillText('P or ENTER — resume', CFG.viewW / 2, 310);
+  ctx.fillText('Progress auto-saves — your game is saved.', CFG.viewW / 2, 340);
+  ctx.fillText('M — mute sound', CFG.viewW / 2, 370);
+}
+
+export function drawBusted(G) {
+  const ctx = G.ctx;
+  overlay(ctx, 0.6);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ff5a5a';
+  ctx.font = 'bold 72px sans-serif';
+  ctx.fillText('BUSTED', CFG.viewW / 2, 260);
+  ctx.fillStyle = '#fff';
+  ctx.font = '20px sans-serif';
+  ctx.fillText(G.bustedReason === 'down' ? 'Rex went down — the crew dragged him back to Mara\'s.' : 'The NBPD took Rex in — the crew dragged him back to Mara\'s.', CFG.viewW / 2, 310);
+  ctx.fillText(`Lost $${G.bustedLost || 0} in the shuffle. The job starts over from this step.`, CFG.viewW / 2, 342);
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillText('ENTER — back to the streets', CFG.viewW / 2, 400);
+}
+
+export function drawWon(G) {
+  const ctx = G.ctx;
+  overlay(ctx, 0.55);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd94a';
+  ctx.font = 'bold 64px sans-serif';
+  ctx.fillText('NEON BAY IS YOURS', CFG.viewW / 2, 250);
+  ctx.fillStyle = '#fff';
+  ctx.font = '22px sans-serif';
+  ctx.fillText(`King is down. Rex walks away with $${G.player.money}.`, CFG.viewW / 2, 300);
+  ctx.font = '18px sans-serif';
+  ctx.fillStyle = '#cfe3ff';
+  ctx.fillText('Five jobs. One town. Thanks for playing.', CFG.viewW / 2, 336);
+  ctx.fillText('ENTER — back to the title', CFG.viewW / 2, 390);
 }
