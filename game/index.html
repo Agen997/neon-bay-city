@@ -3,17 +3,95 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Block Dodger</title>
+<link rel="icon" href="data:,">
+<title>Neon Bay — an open-world crime game</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #11141b; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1a0f1e; font-family: "Segoe UI", system-ui, sans-serif; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .hud { position: fixed; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.8); pointer-events: none; user-select: none; }
+  #hud-top { top: 14px; right: 16px; text-align: right; }
+  #cash { font-size: 26px; font-weight: 700; color: #7dff8a; letter-spacing: .5px; }
+  #clock { font-size: 13px; opacity: .85; }
+  #stars { font-size: 22px; letter-spacing: 3px; color: #ffd23e; min-height: 26px; }
+  #stars .off { color: rgba(255,255,255,.25); }
+  #bars { margin-top: 6px; width: 220px; margin-left: auto; }
+  .bar { height: 10px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.35); border-radius: 3px; margin-top: 4px; overflow: hidden; }
+  .bar > div { height: 100%; transition: width .15s; }
+  #health-fill { background: linear-gradient(90deg,#ff5f6d,#ffc371); }
+  #armor-fill { background: linear-gradient(90deg,#4facfe,#00f2fe); }
+  #weapon { font-size: 17px; font-weight: 600; margin-top: 6px; }
+  #weapon small { opacity: .8; font-weight: 400; }
+  #minimap-wrap { left: 14px; bottom: 14px; }
+  #minimap { border: 2px solid rgba(255,255,255,.4); border-radius: 8px; background: rgba(10,10,20,.6); }
+  #objective { left: 50%; bottom: 26px; transform: translateX(-50%); font-size: 19px; font-weight: 600; text-align: center; max-width: 70vw; }
+  #objective .sub { font-size: 14px; font-weight: 400; opacity: .9; }
+  #prompt { left: 50%; bottom: 96px; transform: translateX(-50%); font-size: 16px; background: rgba(0,0,0,.55); padding: 6px 14px; border-radius: 16px; }
+  #bossbar { left: 50%; top: 16px; transform: translateX(-50%); width: 420px; text-align: center; }
+  #bossbar .name { font-size: 16px; font-weight: 700; letter-spacing: 1px; color: #ff8a7a; }
+  #bossbar .bar { height: 12px; }
+  #boss-fill { background: linear-gradient(90deg,#ff416c,#ff4b2b); }
+  #toast { left: 50%; top: 70px; transform: translateX(-50%); font-size: 20px; font-weight: 700; color: #ffe27a; text-align: center; }
+  #crosshair { left: 50%; top: 50%; transform: translate(-50%,-50%); font-size: 18px; opacity: .9; }
+  .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #fff; text-align: center; z-index: 10; }
+  #title-screen { background: linear-gradient(180deg, rgba(26,10,40,.35), rgba(10,5,25,.78)); }
+  #title-screen h1 { font-size: 84px; margin: 0; letter-spacing: 6px; font-style: italic; color: #ff5da2; text-shadow: 0 0 24px #ff2e88, 0 0 60px #7b2eff, 3px 3px 0 #ffe27a; }
+  #title-screen .tag { font-size: 19px; margin: 6px 0 26px; color: #ffd9ec; letter-spacing: 2px; }
+  .btn { pointer-events: auto; cursor: pointer; background: linear-gradient(180deg,#ff5da2,#c2185b); color: #fff; border: 2px solid #ffd1e8; border-radius: 8px; font-size: 19px; font-weight: 700; padding: 11px 34px; margin: 5px; letter-spacing: 1px; box-shadow: 0 4px 18px rgba(255,46,136,.45); }
+  .btn:hover { filter: brightness(1.15); }
+  .btn.alt { background: linear-gradient(180deg,#3a4a6b,#22304d); border-color: #9db8e8; box-shadow: none; }
+  .controls { margin-top: 22px; font-size: 14px; line-height: 1.75; color: #e8e4ff; background: rgba(0,0,0,.45); padding: 12px 22px; border-radius: 10px; }
+  .controls b { color: #ffe27a; }
+  #bigmsg { background: rgba(5,0,10,.55); }
+  #bigmsg h1 { font-size: 72px; margin: 0; letter-spacing: 10px; font-style: italic; }
+  #bigmsg p { font-size: 19px; margin: 10px 0 4px; }
+  .hidden { display: none !important; }
 </style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
 </head>
 <body>
-<canvas id="game" aria-label="Block Dodger: move the paddle left and right to dodge falling blocks and catch coins"></canvas>
+<canvas id="game" aria-label="Neon Bay: a 3D open-world crime game. Walk and drive around the coastal city of Neon Bay, run jobs for Mara Voss, and stay ahead of the NBPD."></canvas>
 <p id="status" role="status" aria-live="polite"></p>
+
+<div id="hud-top" class="hud hidden">
+  <div id="cash">$0</div>
+  <div id="clock">18:42</div>
+  <div id="stars"></div>
+  <div id="bars">
+    <div class="bar"><div id="health-fill" style="width:100%"></div></div>
+    <div class="bar"><div id="armor-fill" style="width:0%"></div></div>
+  </div>
+  <div id="weapon">Fists</div>
+</div>
+<div id="minimap-wrap" class="hud hidden"><canvas id="minimap" width="190" height="190"></canvas></div>
+<div id="objective" class="hud hidden"></div>
+<div id="prompt" class="hud hidden"></div>
+<div id="bossbar" class="hud hidden"><div class="name">THE TIDE KING</div><div class="bar"><div id="boss-fill" style="width:100%"></div></div></div>
+<div id="toast" class="hud hidden"></div>
+<div id="crosshair" class="hud hidden">+</div>
+
+<div id="title-screen" class="screen">
+  <h1>NEON BAY</h1>
+  <div class="tag">RUN THE BAY. DODGE THE NBPD. TAKE THE CROWN.</div>
+  <div>
+    <button id="btn-new" class="btn">NEW GAME</button>
+    <button id="btn-continue" class="btn alt hidden">CONTINUE</button>
+  </div>
+  <div class="controls">
+    <b>WASD</b> move / drive &nbsp; <b>Mouse</b> camera &nbsp; <b>Shift</b> sprint &nbsp; <b>Space</b> jump / handbrake<br>
+    <b>F</b> enter / exit car &nbsp; <b>Left click</b> attack / shoot &nbsp; <b>1–4</b> weapons &nbsp; <b>R</b> radio &nbsp; <b>P</b> pause<br>
+    Meet <b>Mara Voss</b> on Harbor Row (west waterfront) for work. Don't let the NBPD box you in.
+  </div>
+</div>
+
+<div id="bigmsg" class="screen hidden">
+  <h1 id="bigmsg-title">BUSTED</h1>
+  <p id="bigmsg-text"></p>
+  <p id="bigmsg-sub" style="font-size:15px;opacity:.85"></p>
+</div>
+
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

@@ -1,5 +1,1 @@
-[
-  { "name": "1-start.jpg", "query": "?shot=start&seed=1" },
-  { "name": "2-play.jpg", "query": "?shot=play&seed=1" },
-  { "name": "3-end.jpg", "query": "?shot=end&seed=1" }
-]
+[{"alt":"Rex Marlowe on Harbor Row at golden hour: neon towers, palm-lined waterfront, traffic, pedestrians, HUD with cash, health and minimap, and the mission objective to see Mara Voss.","name":"1-cover.jpg","query":"?shot=cover&seed=1"},{"alt":"Driving north up a Neon Bay avenue at sunset, traffic around, mission objective and minimap on the HUD.","name":"2-drive.jpg","query":"?shot=drive&seed=1"},{"alt":"Four wanted stars: NBPD patrol cars in pursuit and the police helicopter overhead while Rex flees in a stolen car.","name":"3-wanted.jpg","query":"?shot=wanted&seed=1"},{"alt":"The Tide King boss fight on Lighthouse Point beach at sunset, boss health bar on screen, Rex armed with a shotgun.","name":"4-boss.jpg","query":"?shot=boss&seed=1"}]

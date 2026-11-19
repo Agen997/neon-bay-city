@@ -1,79 +1,156 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Screenshot scenes behind ?shot=cover|drive|wanted|boss. Each stages the real game —
+// player, cars, police, gang, HUD — then main.js runs the simulation forward a fixed
+// number of steps with a scripted input, so the frame is a true render of play and the
+// same seed always gives the same picture.
+import { PLACES } from './config.js';
+import { G } from './state.js';
+import { enterCar } from './player.js';
+import { spawnGang } from './combat.js';
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
-
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
-  }
-  return Infinity;
+function fakeInput({ fwd = 0, side = 0, firing = false } = {}) {
+  return {
+    keys: new Set(),
+    firing,
+    locked: false,
+    moveAxes: () => ({ fwd, side, turn: 0, sprint: false, handbrake: false }),
+    takeMouse: () => ({ dx: 0, dy: 0 }),
+    takeActions: () => 0,
+    queueAction: () => {},
+    setFiring: () => {},
+    requestLock: () => {},
+  };
 }
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
-  }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
+function placeTraffic(index, x, z, yaw) {
+  const car = G.cars.find((c, i) => c.kind === 'traffic' && i >= index) || G.cars[index];
+  if (!car) return;
+  car.mesh.position.set(x, 0, z);
+  car.yaw = yaw;
+  car.mesh.rotation.y = yaw;
+  car.speed = 9;
+  car.ai.wp = null;
 }
 
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+function stageCover() {
+  const player = G.player;
+  player.mesh.position.set(-198, 0, 2);
+  player.cash = 1250;
+  player.weapon = 'pistol';
+  player.ammo.pistol = 36;
+  player.armor = 40;
+  G.camYaw = -1.35; // camera over the sand, looking east-northeast into the city
+  G.camPitch = 0.3;
+  player.yaw = G.camYaw + Math.PI;
+  player.mesh.rotation.y = player.yaw;
+  G.camPos = null;
+  // A parked car beside Rex, traffic rolling down Harbor Row, peds on the sidewalk.
+  const parked = G.cars.find((c) => c.kind === 'parked' && !c.missionTag);
+  if (parked) {
+    parked.mesh.position.set(-194, 0, 13);
+    parked.yaw = Math.PI / 2 + 0.2;
+    parked.mesh.rotation.y = parked.yaw;
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
+  placeTraffic(0, -203, -10, Math.PI);
+  placeTraffic(1, -197, 46, 0);
+  placeTraffic(2, -203, 52, Math.PI);
+  placeTraffic(3, -197, -32, 0);
+  G.peds.slice(0, 4).forEach((ped, i) => {
+    ped.mesh.position.set(-190 + i * 2.2, 0, -2 - i * 5);
+    ped.target = { x: -190, z: -40 };
+  });
+  G.mission.text = 'See Mara Voss on Harbor Row';
+  G.mission.sub = 'West waterfront — the yellow marker. She has work for Rex.';
+  return { steps: 70, input: fakeInput() };
+}
+
+function stageDrive() {
+  const player = G.player;
+  const car = G.cars.find((c) => c.kind === 'traffic');
+  car.mesh.position.set(3, 0, -30);
+  car.yaw = Math.PI; // north
+  car.mesh.rotation.y = car.yaw;
+  car.speed = 0;
+  player.mesh.position.set(3, 0, -30);
+  enterCar(car);
+  G.camYaw = 0.35;
+  G.camPitch = 0.34;
+  G.camPos = null;
+  player.cash = 860;
+  placeTraffic(1, -3, -90, Math.PI);
+  placeTraffic(2, 3, 40, 0);
+  placeTraffic(3, 53, -60, Math.PI);
+  G.mission.text = 'Deliver the sedan to Harbor Row';
+  G.mission.sub = 'Mara is waiting by the waterfront drop-off.';
+  G.mission.markerPos = { x: PLACES.harborDrop.x, z: PLACES.harborDrop.z };
+  return { steps: 170, input: fakeInput({ fwd: 1 }) };
+}
+
+function stageWanted() {
+  const player = G.player;
+  const car = G.cars.find((c) => c.kind === 'traffic');
+  car.mesh.position.set(47, 0, 50);
+  car.yaw = Math.PI / 2; // east
+  car.mesh.rotation.y = car.yaw;
+  car.speed = 14;
+  player.mesh.position.set(47, 0, 50);
+  enterCar(car);
+  G.stars = 4;
+  G.camYaw = -Math.PI / 2 + 0.4;
+  G.camPitch = 0.08;
+  G.camPos = null;
+  player.cash = 2040;
+  player.weapon = 'smg';
+  player.ammo.smg = 90;
+  // Three patrol cars in pursuit and the helicopter overhead.
+  const spots = [
+    { x: 38, z: 44, yaw: Math.PI / 2 },
+    { x: 34, z: 56, yaw: Math.PI / 2 },
+    { x: 52, z: 58, yaw: Math.PI / 2 },
+  ];
+  G.police.slice(0, 3).forEach((cop, i) => {
+    cop.active = true;
+    cop.driver = 'police';
+    cop.mesh.visible = true;
+    cop.mesh.position.set(spots[i].x, 0, spots[i].z);
+    cop.yaw = spots[i].yaw;
+    cop.mesh.rotation.y = cop.yaw;
+    cop.speed = 15;
+  });
+  if (G.heli) {
+    G.heli.active = true;
+    G.heli.mesh.visible = true;
+    G.heli.mesh.position.set(87, 24, 50);
+    G.heli.angle = Math.PI / 2;
   }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  G.mission.text = 'Garage the sports car on Harbor Row';
+  G.mission.sub = 'The NBPD are coming. Lose them or outrun them.';
+  G.mission.markerPos = { x: PLACES.garage.x, z: PLACES.garage.z };
+  return { steps: 55, input: fakeInput({ fwd: 1 }) };
+}
+
+function stageBoss() {
+  const player = G.player;
+  player.mesh.position.set(-194, 0, 156);
+  player.weapon = 'shotgun';
+  player.ammo.shotgun = 18;
+  player.armor = 60;
+  player.cash = 3150;
+  G.camYaw = 2.47;
+  G.camPitch = 0.3;
+  player.yaw = G.camYaw + Math.PI;
+  player.mesh.rotation.y = player.yaw;
+  G.camPos = null;
+  spawnGang(PLACES.bossArena.x, PLACES.bossArena.z, 2, true);
+  G.mission.text = 'Defeat the Tide King';
+  G.mission.sub = 'Watch the shotgun. Use the lighthouse for cover.';
+  G.mission.markerPos = null;
+  return { steps: 70, input: fakeInput() };
+}
+
+/** Stage the named scene; returns how many fixed steps to run and with what input. */
+export function stageShot(name) {
+  if (name === 'drive') return stageDrive();
+  if (name === 'wanted') return stageWanted();
+  if (name === 'boss') return stageBoss();
+  return stageCover();
 }
