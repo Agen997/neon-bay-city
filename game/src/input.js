@@ -1,51 +1,53 @@
-// Neon Bay 3D — keyboard + mouse input. WASD moves, mouse orbits (right-drag)
-// and aims, wheel zooms. Edge-triggered presses are queued per frame.
-export class Input {
-  constructor(canvas) {
-    this.keys = new Set();
-    this.pressedQueue = [];
-    this.mouse = { x: 0, y: 0, dx: 0, dy: 0, down: false, rdown: false, wheel: 0 };
-    this.canvas = canvas;
-    window.addEventListener('keydown', (e) => {
-      if (e.repeat) return;
-      this.keys.add(e.code);
-      this.pressedQueue.push(e.code);
-      if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
-    });
-    window.addEventListener('keyup', (e) => this.keys.delete(e.code));
-    window.addEventListener('blur', () => this.keys.clear());
-    canvas.addEventListener('mousemove', (e) => {
-      const r = canvas.getBoundingClientRect();
-      this.mouse.x = e.clientX - r.left;
-      this.mouse.y = e.clientY - r.top;
-      this.mouse.dx += e.movementX || 0;
-      this.mouse.dy += e.movementY || 0;
-    });
-    canvas.addEventListener('mousedown', (e) => {
-      if (e.button === 0) this.mouse.down = true;
-      if (e.button === 2) this.mouse.rdown = true;
-    });
-    window.addEventListener('mouseup', (e) => {
-      if (e.button === 0) this.mouse.down = false;
-      if (e.button === 2) this.mouse.rdown = false;
-    });
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-    canvas.addEventListener('wheel', (e) => {
-      this.mouse.wheel += e.deltaY;
-      e.preventDefault();
-    }, { passive: false });
-  }
+// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
+// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
+// frames is never lost and never counted twice.
 
-  down(code) { return this.keys.has(code); }
+export const ACTION_CONFIRM = 1;
+export const ACTION_PAUSE = 2;
 
-  // True once, the frame the key went down.
-  pressed(code) { return this.pressedQueue.includes(code); }
+const LEFT = new Set(['ArrowLeft', 'KeyA']);
+const RIGHT = new Set(['ArrowRight', 'KeyD']);
+const CONFIRM = new Set(['Space', 'Enter']);
+const PAUSE = new Set(['KeyP', 'Escape']);
 
-  // Call at the end of each frame.
-  endFrame() {
-    this.pressedQueue.length = 0;
-    this.mouse.dx = 0;
-    this.mouse.dy = 0;
-    this.mouse.wheel = 0;
-  }
+export function createInput(target) {
+  let left = false;
+  let right = false;
+  let actions = 0;
+
+  window.addEventListener('keydown', (event) => {
+    if (LEFT.has(event.code)) left = true;
+    else if (RIGHT.has(event.code)) right = true;
+    else if (CONFIRM.has(event.code)) {
+      if (!event.repeat) actions |= ACTION_CONFIRM;
+    } else if (PAUSE.has(event.code)) {
+      if (!event.repeat) actions |= ACTION_PAUSE;
+    } else return;
+    event.preventDefault();
+  });
+  window.addEventListener('keyup', (event) => {
+    if (LEFT.has(event.code)) left = false;
+    else if (RIGHT.has(event.code)) right = false;
+  });
+  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
+  window.addEventListener('blur', () => {
+    left = false;
+    right = false;
+  });
+  target.addEventListener('pointerdown', () => {
+    actions |= ACTION_CONFIRM;
+  });
+
+  return {
+    /** -1 for left, 1 for right, 0 for neither or both. */
+    direction() {
+      return (right ? 1 : 0) - (left ? 1 : 0);
+    },
+    /** The one-shot presses since the last call, as ACTION_* flags. */
+    takeActions() {
+      const taken = actions;
+      actions = 0;
+      return taken;
+    },
+  };
 }

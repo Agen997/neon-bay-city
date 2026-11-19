@@ -1,1 +1,5 @@
-{"shots":[{"description":"Golden-hour downtown chase: Rex driving through traffic at wanted level 3, two NBPD cruisers on his tail, objective beacon ahead, HUD and minimap live.","id":1,"name":"cover-downtown-chase"},{"description":"Rex on foot at the night market with pedestrians, a parked car to steal, and the mission marker glowing over the stalls at sunset.","id":2,"name":"night-market-on-foot"},{"description":"Wanted level 4: police helicopter overhead, roadblock ahead on the avenue, cruisers behind, sun low over the wet streets.","id":3,"name":"heli-roadblock-chase"},{"description":"Final boss fight on the lighthouse beach: Rex facing Tide King and his crew on the sand, lighthouse beam sweeping the bay, boss health bar on screen.","id":4,"name":"king-fight-lighthouse-beach"}]}
+[
+  { "name": "1-start.jpg", "query": "?shot=start&seed=1" },
+  { "name": "2-play.jpg", "query": "?shot=play&seed=1" },
+  { "name": "3-end.jpg", "query": "?shot=end&seed=1" }
+]
